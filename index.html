@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- viewport-fit=cover so the layout reaches under the notch in standalone mode -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+    <title>Field Report</title>
+    <meta name="description" content="Voice-to-structured field reports for plant walkdowns." />
+
+    <!-- PWA. Relative paths so this works from /<repo>/ on GitHub Pages. -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
+    <meta name="theme-color" content="#0a0a0a" />
+
+    <!-- iOS standalone -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Field Rpt" />
+
+    <!-- Paint the ground before React mounts so there is no white flash
+         on a dark app opened outdoors. -->
+    <style>
+      html, body { margin: 0; background: #0a0a0a; }
+      #root { min-height: 100vh; min-height: 100dvh; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
