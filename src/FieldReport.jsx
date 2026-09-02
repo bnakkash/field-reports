@@ -17,7 +17,7 @@ import {
 // replacement actually fires — optional chaining on `import.meta` defeats it.
 const STRUCTURE_ENDPOINT =
   import.meta.env.VITE_STRUCTURE_ENDPOINT ||
-  'https://vvilcwkizpprjrfvthgk.supabase.co/functions/v1/structure-report';
+  'https://itxcaamyiilvotfzctit.supabase.co/functions/v1/structure-report';
 
 // Optional. If you set FR_SHARED_SECRET on the Edge Function, set this too.
 // It ships in the public bundle — a speed bump against casual abuse, not a secret.

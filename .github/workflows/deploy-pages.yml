@@ -3,7 +3,7 @@
 # Builds the Vite app and publishes it to GitHub Pages.
 # Set the endpoint once in the repo: Settings → Secrets and variables →
 # Actions → Variables → New repository variable
-#     VITE_STRUCTURE_ENDPOINT = https://vvilcwkizpprjrfvthgk.supabase.co/functions/v1/structure-report
+#     VITE_STRUCTURE_ENDPOINT = https://itxcaamyiilvotfzctit.supabase.co/functions/v1/structure-report
 #
 # It is a *variable*, not a secret — it is a public URL and it needs to be
 # readable at build time. Nothing secret ever enters this workflow.

@@ -33,7 +33,7 @@ Test on the phone via the deployed Pages URL instead.
 3. Repo **Settings → Secrets and variables → Actions → Variables**, add:
 
    ```
-   VITE_STRUCTURE_ENDPOINT = https://vvilcwkizpprjrfvthgk.supabase.co/functions/v1/structure-report
+   VITE_STRUCTURE_ENDPOINT = https://itxcaamyiilvotfzctit.supabase.co/functions/v1/structure-report
    ```
 
    A *variable*, not a secret — it is a public URL the build must read.
@@ -65,16 +65,24 @@ evictable storage.
 
 ## The Edge Function
 
-Already deployed to Supabase project `vvilcwkizpprjrfvthgk` as
-`structure-report`. Source is in `supabase/functions/structure-report/index.ts`
-for reference.
+Runs in its own Supabase project, `itxcaamyiilvotfzctit` — deliberately not
+the one hosting the PM-Scheduler SaaS, since Edge Function secrets are
+per-project and an Anthropic key should not share a blast radius with anything
+else. Source of truth is `supabase/functions/structure-report/index.ts`.
 
-**It has no API key yet.** Until you run this, GENERATE REPORT returns 500:
+Deploy it, then set its secrets:
 
 ```bash
-supabase secrets set ANTHROPIC_API_KEY=sk-ant-...                 --project-ref vvilcwkizpprjrfvthgk
-supabase secrets set ALLOWED_ORIGINS=https://YOURNAME.github.io   --project-ref vvilcwkizpprjrfvthgk
-supabase secrets set FR_SHARED_SECRET=$(openssl rand -hex 16)     --project-ref vvilcwkizpprjrfvthgk
+supabase functions deploy structure-report --project-ref itxcaamyiilvotfzctit
+```
+
+**Until it is deployed and keyed, GENERATE REPORT fails** — 404 if the function
+is missing, 500 if it is there without a key:
+
+```bash
+supabase secrets set ANTHROPIC_API_KEY=sk-ant-...                 --project-ref itxcaamyiilvotfzctit
+supabase secrets set ALLOWED_ORIGINS=https://bnakkash.github.io   --project-ref itxcaamyiilvotfzctit
+supabase secrets set FR_SHARED_SECRET=$(openssl rand -hex 16)     --project-ref itxcaamyiilvotfzctit
 ```
 
 Recording and SAVE RAW work without it — test those first.

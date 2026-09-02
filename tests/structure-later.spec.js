@@ -18,7 +18,7 @@ import { test, expect } from '@playwright/test';
  * checks, listed in README under "Not verified".
  */
 
-const ENDPOINT = 'https://vvilcwkizpprjrfvthgk.supabase.co/functions/v1/structure-report';
+const ENDPOINT = 'https://itxcaamyiilvotfzctit.supabase.co/functions/v1/structure-report';
 
 const TRANSCRIPT =
   'level transmitter two hundred at the reactor sump reads high no comms on ' +

@@ -5,11 +5,11 @@ because they involve your API key and your repo.
 
 ---
 
-> **Status check, 2026-09-01.** The function is live — a GET returns
-> `405 method_not_allowed` — but a POST still returns
-> `500 {"error":"server_misconfigured"}`, which means `ANTHROPIC_API_KEY` has
-> never been set. Step 2 below is still outstanding, and GENERATE REPORT
-> cannot work until it is done. Recording and SAVE RAW work today.
+> **Status, 2026-09-02.** The function moved to its own Supabase project,
+> `itxcaamyiilvotfzctit`, so it no longer shares one with the PM-Scheduler
+> SaaS. The client and the test suite point there now. **It is not deployed
+> there yet and has no key**, so GENERATE REPORT does not work — step 2 below
+> is what makes it work. Recording and SAVE RAW work today.
 
 ## 1. Rotate your Anthropic key — do this first
 
@@ -19,28 +19,42 @@ console.anthropic.com, then continue.
 
 ---
 
-## 2. The Edge Function is already deployed
+## 2. Deploy the Edge Function and set its secrets
 
-Deployed to your Supabase project `bnakkash's Project PM-Scheduler-SaaS`
-(`vvilcwkizpprjrfvthgk`) — it was your only project. It sits alongside `scalar`
-and shares nothing with it. Move it to its own project later if you'd rather
-keep the SaaS clean.
+It now lives in its own Supabase project, `itxcaamyiilvotfzctit` — not
+alongside the PM-Scheduler SaaS as it originally did. That is the point: Edge
+Function secrets are per-project, so an Anthropic key compromise here cannot
+reach anything else of yours, and vice versa.
 
-**Endpoint**
+**Deploy it.** Source of truth is `supabase/functions/structure-report/index.ts`
+in this repo:
+
+```bash
+supabase functions deploy structure-report --project-ref itxcaamyiilvotfzctit
+```
+
+Or paste that file into the dashboard's Edge Functions editor, which works from
+a phone. Until it exists, the endpoint 404s.
+
+**Endpoint** (already wired into the client and the test suite)
 
 ```
-https://vvilcwkizpprjrfvthgk.supabase.co/functions/v1/structure-report
+https://itxcaamyiilvotfzctit.supabase.co/functions/v1/structure-report
 ```
 
-Verified live: a GET returns `405 method_not_allowed` from the handler.
-It will return `500 server_misconfigured` until you set the key below.
+Diagnosing it: a GET returning 404 means the function was never deployed; a
+POST returning `500 server_misconfigured` means it is deployed but has no key;
+a GET returning `405 method_not_allowed` means the handler is alive.
+
+**Then delete the old `structure-report` from the PM-Scheduler project**, so no
+forgotten endpoint is left holding an Anthropic key.
 
 **Set the secrets** (never paste the key into the app or the repo):
 
 ```bash
-supabase secrets set ANTHROPIC_API_KEY=sk-ant-...            --project-ref vvilcwkizpprjrfvthgk
-supabase secrets set ALLOWED_ORIGINS=https://YOURNAME.github.io --project-ref vvilcwkizpprjrfvthgk
-supabase secrets set FR_SHARED_SECRET=$(openssl rand -hex 16)  --project-ref vvilcwkizpprjrfvthgk
+supabase secrets set ANTHROPIC_API_KEY=sk-ant-...            --project-ref itxcaamyiilvotfzctit
+supabase secrets set ALLOWED_ORIGINS=https://bnakkash.github.io --project-ref itxcaamyiilvotfzctit
+supabase secrets set FR_SHARED_SECRET=$(openssl rand -hex 16)  --project-ref itxcaamyiilvotfzctit
 ```
 
 `ALLOWED_ORIGINS` and `FR_SHARED_SECRET` are optional but recommended. If you
@@ -64,7 +78,7 @@ body cap, upstream errors translated instead of passed through.
 `.env` (or GitHub Actions repository variable):
 
 ```
-VITE_STRUCTURE_ENDPOINT=https://vvilcwkizpprjrfvthgk.supabase.co/functions/v1/structure-report
+VITE_STRUCTURE_ENDPOINT=https://itxcaamyiilvotfzctit.supabase.co/functions/v1/structure-report
 ```
 
 ---
