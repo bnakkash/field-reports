@@ -26,19 +26,26 @@ microphone and service worker both work. **Do not test over your LAN IP** —
 `http://192.168.x.x` is not a secure context and both will silently refuse.
 Test on the phone via the deployed Pages URL instead.
 
-**GENERATE REPORT does not work from `npm run dev`.** The Edge Function's
-`ALLOWED_ORIGINS` lists the Pages origin only, so a request from
-`http://localhost:5178` comes back `403 origin_not_allowed` — the allowlist
-working as intended, not a bug. Recording, SAVE RAW, and everything else work
-locally. To structure locally too, add the dev origin:
+Structuring works from `npm run dev` — the Edge Function's `ALLOWED_ORIGINS`
+lists the dev origins alongside the Pages one:
+
+```
+https://bnakkash.github.io, http://localhost:5173, http://localhost:5178
+```
+
+5173 is Vite's default; 5178 is the port `playwright.config.js` starts. **On any
+other port GENERATE REPORT returns `403 origin_not_allowed`** — that is the
+allowlist doing its job, not a bug, but it reads as a broken app if you don't
+know why. Either use one of those two ports, or add yours:
 
 ```bash
-supabase secrets set ALLOWED_ORIGINS=https://bnakkash.github.io,http://localhost:5178 \
+supabase secrets set ALLOWED_ORIGINS=https://bnakkash.github.io,http://localhost:5173,http://localhost:5178 \
   --project-ref itxcaamyiilvotfzctit
 ```
 
-The test suite is unaffected — it mocks the endpoint and never leaves the
-machine.
+A browser sets `Origin` itself and cannot be made to lie about it, so listing
+localhost costs nothing against a remote attacker. The test suite is unaffected
+either way — it mocks the endpoint and never leaves the machine.
 
 ## Deploying
 
