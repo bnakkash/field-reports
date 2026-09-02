@@ -111,10 +111,34 @@ supabase secrets set FR_SHARED_SECRET=$(openssl rand -hex 16)     --project-ref 
 
 Recording and SAVE RAW work without it — test those first.
 
-If you set `FR_SHARED_SECRET`, put the same value in `.env` as `VITE_FR_KEY`
-and the client will send it. Note it ships in the public bundle: a speed bump
-against casual abuse, not a secret. The thing the proxy actually guarantees is
-that your Anthropic key is never in the browser.
+### Locking the endpoint with a passphrase
+
+Without `FR_SHARED_SECRET`, anyone who opens the published app can spend your
+Anthropic credit. The origin allowlist does not prevent that — it allows *this
+site*, and anyone can load this site.
+
+Set a passphrase you can remember and type on a phone:
+
+```bash
+supabase secrets set FR_SHARED_SECRET='pick-something-memorable' --project-ref itxcaamyiilvotfzctit
+```
+
+Nothing else to configure. The app asks for it **lazily, on the first 401**:
+the next GENERATE REPORT raises a PASSPHRASE REQUIRED prompt, stores what you
+type in that device's own storage, and retries. Each phone or browser is
+unlocked once. Rotating the secret makes every device re-prompt on its next
+attempt — a stale value is discarded rather than cached, so it can't wedge.
+
+**The passphrase is deliberately not built into the bundle.** It used to be
+read from `VITE_FR_KEY`, which compiled it into the public JavaScript where
+anyone could read it — a lock with the key taped to it. A test asserts the
+shipped bundle contains no secret.
+
+What this does and does not buy you: it stops anyone who finds the URL, which
+is the realistic threat for an unlisted personal tool. It is not authentication
+— anyone you give the passphrase to has it for good, and it travels no further
+than the people you tell. Pair it with a workspace spend limit in the Anthropic
+console, which is the only control that bounds the damage regardless.
 
 ---
 

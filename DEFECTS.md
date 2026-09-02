@@ -74,8 +74,14 @@ supabase secrets set ALLOWED_ORIGINS=https://bnakkash.github.io --project-ref it
 supabase secrets set FR_SHARED_SECRET=$(openssl rand -hex 16)  --project-ref itxcaamyiilvotfzctit
 ```
 
-`ALLOWED_ORIGINS` and `FR_SHARED_SECRET` are optional but recommended. If you
-set the shared secret, send it from the client as the `x-fr-key` header.
+`ALLOWED_ORIGINS` and `FR_SHARED_SECRET` are optional but strongly
+recommended — without the shared secret, anyone who opens the published app can
+spend your Anthropic credit.
+
+Setting `FR_SHARED_SECRET` needs no client change: the app asks for the
+passphrase on its first 401, keeps it in that device's storage, and sends it as
+`x-fr-key` from then on. Pick something you can type on a phone, not the
+`openssl rand` output above.
 
 **What the proxy does and does not buy you.** It guarantees your Anthropic key
 is never in the browser and can only ever be used through this one endpoint's

@@ -18,7 +18,7 @@
      caching a structuring response would be worse.
    ══════════════════════════════════════════════════════════════ */
 
-const VERSION = 'v3';
+const VERSION = 'v4';
 const SHELL = `fr-shell-${VERSION}`;
 const ASSETS = `fr-assets-${VERSION}`;
 const FONTS = `fr-fonts-${VERSION}`;

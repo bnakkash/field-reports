@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Mic, Square, ChevronLeft, Copy, Check, Trash2, History, AlertTriangle,
   Loader2, ClipboardList, ListChecks, StickyNote, Plus, Radio, Download,
-  WifiOff, RotateCw, Play
+  WifiOff, RotateCw, Play, Lock
 } from 'lucide-react';
 
 // ═════════════════════════════════════════════════════════════
@@ -19,9 +19,18 @@ const STRUCTURE_ENDPOINT =
   import.meta.env.VITE_STRUCTURE_ENDPOINT ||
   'https://itxcaamyiilvotfzctit.supabase.co/functions/v1/structure-report';
 
-// Optional. If you set FR_SHARED_SECRET on the Edge Function, set this too.
-// It ships in the public bundle — a speed bump against casual abuse, not a secret.
-const FR_KEY = import.meta.env.VITE_FR_KEY || '';
+// The proxy's shared secret is deliberately NOT built into the bundle.
+//
+// It used to be read from VITE_FR_KEY, which put it in the public JavaScript
+// where anyone could read it with devtools — a lock with the key taped to it.
+// Instead the passphrase is typed once per device and kept in this origin's
+// own storage, so the published app carries no secret at all.
+//
+// It is requested lazily, on a 401, rather than up front: with no
+// FR_SHARED_SECRET set on the function the app never asks for one, and the day
+// you set (or rotate) it, the next structuring request prompts and retries.
+// Client and server need no agreement about whether the feature is "on".
+const PASSPHRASE_KEY = 'passphrase';
 
 const MAX_AUDIO_MS = 90 * 60 * 1000;   // hard stop at 90 min to bound memory
 const DRAFT_SAVE_MS = 4000;            // checkpoint interval while recording
@@ -36,8 +45,6 @@ const AUDIO_RETENTION_DAYS = 30;
 const PROXY_ERRORS = {
   server_misconfigured:
     'Structuring service has no API key set yet. Use SAVE RAW — the dictation is kept and can be structured later.',
-  unauthorized:
-    'Structuring service rejected this build’s key (VITE_FR_KEY does not match FR_SHARED_SECRET).',
   origin_not_allowed: 'This origin is not on the structuring service’s allowlist.',
   rate_limited: 'Too many requests in the last minute. Wait a moment, then retry.',
   transcript_too_long: 'Dictation is too long to structure in one pass. Split it into two reports.',
@@ -277,6 +284,10 @@ export default function FieldReport() {
   // Set while re-structuring an already-saved report; save then replaces that
   // report in place instead of logging a second copy of the same walkdown.
   const [restructureId, setRestructureId] = useState(null);
+  // Held in memory for the session and in device storage between sessions.
+  // Never sent anywhere but this app's own proxy, as the x-fr-key header.
+  const [passphrase, setPassphrase] = useState('');
+  const [needKey, setNeedKey] = useState(false);
 
   const recRef = useRef(null);
   const shouldRestartRef = useRef(false);
@@ -315,6 +326,7 @@ export default function FieldReport() {
     requestPersistence();
     loadReports().then(pruneAudio).then(setReports);
     kvGet('draft').then((d) => { if (d?.transcript?.trim()) setDraft(d); });
+    kvGet(PASSPHRASE_KEY).then((k) => { if (typeof k === 'string' && k) setPassphrase(k); });
   }, []);
 
   // ─── connectivity ───
@@ -592,20 +604,37 @@ export default function FieldReport() {
   }, [stopCapture, releaseWake, saveDraft]);
 
   // ─── structure via proxy ───
-  const structure = useCallback(async () => {
+  // `keyOverride` lets the passphrase prompt retry immediately with the value
+  // just typed, rather than waiting a render for state to settle. Guarded
+  // because this is also wired straight to an onClick, which would otherwise
+  // pass a click event in as the key.
+  const structure = useCallback(async (keyOverride) => {
     if (!transcript.trim() || !template) return;
+    const key = typeof keyOverride === 'string' ? keyOverride : passphrase;
     setProcessing(true);
     setApiError(null);
+    setNeedKey(false);
     try {
       const tpl = TEMPLATES[template];
       const res = await fetch(STRUCTURE_ENDPOINT, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(FR_KEY ? { 'x-fr-key': FR_KEY } : {}),
+          ...(key ? { 'x-fr-key': key } : {}),
         },
         body: JSON.stringify({ template: tpl.id, transcript: transcript.trim() }),
       });
+
+      // 401 means the function has a shared secret and ours is absent or stale.
+      // Drop whatever we were holding and ask — never leave a bad value cached,
+      // or the app wedges on every future attempt.
+      if (res.status === 401) {
+        await kvDel(PASSPHRASE_KEY);
+        setPassphrase('');
+        setNeedKey(true);
+        setProcessing(false);
+        return;
+      }
 
       if (!res.ok) {
         const body = await res.text().catch(() => '');
@@ -655,7 +684,7 @@ export default function FieldReport() {
     } finally {
       setProcessing(false);
     }
-  }, [transcript, template, online]);
+  }, [transcript, template, online, passphrase]);
 
   const reset = useCallback(() => {
     setTranscript('');
@@ -732,6 +761,15 @@ export default function FieldReport() {
 
   const handleSave = useCallback(() => persistReport(structured, false), [persistReport, structured]);
   const handleSaveRaw = useCallback(() => persistReport([], true), [persistReport]);
+
+  const submitPassphrase = useCallback(async (value) => {
+    const k = value.trim();
+    if (!k) return;
+    await kvSet(PASSPHRASE_KEY, k);
+    setPassphrase(k);
+    setNeedKey(false);
+    structure(k);
+  }, [structure]);
 
   // The other half of "SAVE RAW — STRUCTURE LATER": pull a saved report back
   // into the record screen, transcript intact and editable, so GENERATE can
@@ -903,6 +941,9 @@ export default function FieldReport() {
               online={online}
               hasAudio={pendingAudio}
               restructuring={!!restructureId}
+              needKey={needKey}
+              onSubmitKey={submitPassphrase}
+              onDismissKey={() => setNeedKey(false)}
               onTranscriptEdit={setTranscript}
               micHeld={micHeld}
               onReleaseMic={releaseMic}
@@ -1104,7 +1145,7 @@ function RecordView({
   template, transcript, interim, recording, audioLevel,
   onStart, onStop, onClear, onStructure, onSaveRaw, processing,
   apiError, micError, sttDown, online, hasAudio, onTranscriptEdit,
-  micHeld, onReleaseMic, restructuring,
+  micHeld, onReleaseMic, restructuring, needKey, onSubmitKey, onDismissKey,
 }) {
   const hasContent = transcript.trim().length > 0;
   const [editing, setEditing] = useState(false);
@@ -1212,6 +1253,8 @@ function RecordView({
         )}
       </div>
 
+      {needKey && <PassphraseGate onSubmit={onSubmitKey} onDismiss={onDismissKey} />}
+
       {(micError || apiError) && (
         <div className="mb-4 p-3 border border-red-900/60 bg-red-950/30 rounded-sm flex gap-2">
           <AlertTriangle size={14} className="text-red-400 mt-0.5 flex-shrink-0" />
@@ -1292,6 +1335,76 @@ function RecordView({
         @keyframes fr-ring { 0% { transform: scale(1); opacity: 0.8; } 100% { transform: scale(1.45); opacity: 0; } }
       `}</style>
     </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════
+// Passphrase gate
+//
+// Shown only when the proxy answers 401 — i.e. it has a shared secret and this
+// device has not been unlocked. The value is stored per-device and never built
+// into the bundle, which is the whole point: a secret compiled into public
+// JavaScript is not a secret.
+// ═════════════════════════════════════════════════════════════
+function PassphraseGate({ onSubmit, onDismiss }) {
+  const [value, setValue] = useState('');
+  const inputRef = useRef(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (value.trim()) onSubmit(value);
+  };
+
+  return (
+    <form
+      onSubmit={submit}
+      className="mb-4 p-3 border border-amber-400/50 bg-amber-400/5 rounded-sm"
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <Lock size={13} className="text-amber-400" />
+        <span className="text-amber-300" style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.2em' }}>
+          PASSPHRASE REQUIRED
+        </span>
+      </div>
+      <div className="text-xs text-amber-200/80 leading-relaxed mb-3" style={{ fontFamily: FONT_MONO }}>
+        This device has not been unlocked for structuring. Enter the passphrase —
+        it is stored on this phone only, never in the app itself.
+      </div>
+      <input
+        ref={inputRef}
+        type="password"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="off"
+        spellCheck="false"
+        enterKeyHint="go"
+        aria-label="Passphrase"
+        className="w-full bg-stone-950 text-stone-100 border border-stone-700 focus:border-amber-400/60 focus:outline-none rounded-sm px-3 py-2.5 mb-2"
+        style={{ fontFamily: FONT_MONO, letterSpacing: '0.1em' }}
+      />
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={!value.trim()}
+          className="flex-1 py-2.5 bg-amber-400 disabled:bg-stone-800 disabled:text-stone-600 text-stone-950 rounded-sm"
+          style={{ fontFamily: FONT_MONO, fontWeight: 600, fontSize: '11px', letterSpacing: '0.15em' }}
+        >
+          UNLOCK
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="px-4 py-2.5 border border-stone-700 text-stone-400 rounded-sm"
+          style={{ fontFamily: FONT_MONO, fontSize: '11px', letterSpacing: '0.1em' }}
+        >
+          CANCEL
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -1744,7 +1857,7 @@ function Footer({ online }) {
   return (
     <footer className="fr-app-footer pt-3 border-t border-stone-900 flex items-center justify-between">
       <span className="text-stone-700" style={{ fontFamily: FONT_MONO, fontSize: '9px', letterSpacing: '0.25em' }}>
-        v0.3 · CAPTURE OFFLINE · STRUCTURE ONLINE
+        v0.4 · CAPTURE OFFLINE · STRUCTURE ONLINE
       </span>
       <span
         style={{

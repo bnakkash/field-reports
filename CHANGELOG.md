@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.4
+
+### The endpoint is no longer open to anyone with the link
+
+With no shared secret, anyone who opened the published app could spend the
+project's Anthropic credit. The origin allowlist never addressed this — it
+allows *this site*, and anyone can load this site.
+
+Setting `FR_SHARED_SECRET` on the function now locks it, and the client asks
+for the passphrase **lazily, on a 401**. That laziness is the design: with no
+secret set the app never prompts, so the same build works against a secured or
+unsecured function with nothing to keep in sync, and rotating the secret makes
+every device re-prompt on its next attempt.
+
+A rejected passphrase is discarded rather than cached — otherwise a stale value
+would fail every future request with no way to correct it from the UI.
+
+**The secret is no longer compiled into the bundle.** It was previously read
+from `VITE_FR_KEY`, which put it in the public JavaScript for anyone to read:
+a lock with the key taped to it. It now lives only in each device's own
+storage, and a test asserts the shipped bundle contains nothing key-shaped.
+
+This stops anyone who finds the URL. It is not authentication, and it does not
+replace a spend limit — see README for the honest boundary.
+
 ## v0.3
 
 ### The repo now builds the site
