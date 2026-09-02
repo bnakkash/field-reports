@@ -70,14 +70,17 @@ the one hosting the PM-Scheduler SaaS, since Edge Function secrets are
 per-project and an Anthropic key should not share a blast radius with anything
 else. Source of truth is `supabase/functions/structure-report/index.ts`.
 
-Deploy it, then set its secrets:
+It is deployed. Redeploy after an edit with:
 
 ```bash
 supabase functions deploy structure-report --project-ref itxcaamyiilvotfzctit
 ```
 
-**Until it is deployed and keyed, GENERATE REPORT fails** — 404 if the function
-is missing, 500 if it is there without a key:
+`supabase/config.toml` pins `verify_jwt = false` for it, so no flag is needed —
+Edge Functions demand a Supabase JWT by default, and this client sends no
+`Authorization` header, so a redeploy with verification on 401s everything.
+
+**It still has no API key, so GENERATE REPORT returns 500 until you set one:**
 
 ```bash
 supabase secrets set ANTHROPIC_API_KEY=sk-ant-...                 --project-ref itxcaamyiilvotfzctit

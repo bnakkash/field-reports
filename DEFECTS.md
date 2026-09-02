@@ -5,11 +5,14 @@ because they involve your API key and your repo.
 
 ---
 
-> **Status, 2026-09-02.** The function moved to its own Supabase project,
-> `itxcaamyiilvotfzctit`, so it no longer shares one with the PM-Scheduler
-> SaaS. The client and the test suite point there now. **It is not deployed
-> there yet and has no key**, so GENERATE REPORT does not work — step 2 below
-> is what makes it work. Recording and SAVE RAW work today.
+> **Status, 2026-09-02.** The function lives in its own Supabase project,
+> `itxcaamyiilvotfzctit`, and **is deployed** there: a GET returns
+> `405 method_not_allowed` and a CORS preflight returns 204. The client and the
+> test suite point at it.
+>
+> **One thing is left — `ANTHROPIC_API_KEY`.** A POST still returns
+> `500 server_misconfigured`, so GENERATE REPORT will not work until you set it
+> (step 2). Recording and SAVE RAW work today.
 
 ## 1. Rotate your Anthropic key — do this first
 
@@ -26,28 +29,38 @@ alongside the PM-Scheduler SaaS as it originally did. That is the point: Edge
 Function secrets are per-project, so an Anthropic key compromise here cannot
 reach anything else of yours, and vice versa.
 
-**Deploy it.** Source of truth is `supabase/functions/structure-report/index.ts`
-in this repo:
+**Deployed already.** Redeploy after editing
+`supabase/functions/structure-report/index.ts` with:
 
 ```bash
 supabase functions deploy structure-report --project-ref itxcaamyiilvotfzctit
 ```
 
-Or paste that file into the dashboard's Edge Functions editor, which works from
-a phone. Until it exists, the endpoint 404s.
+No `--no-verify-jwt` flag needed — `supabase/config.toml` pins
+`verify_jwt = false` for this function. That matters: Edge Functions require a
+Supabase JWT by default, this client sends no `Authorization` header, and a
+redeploy with verification on returns 401 to every request and looks like the
+app is broken. The flag was easy to forget; the config file is not.
 
-**Endpoint** (already wired into the client and the test suite)
+**Endpoint** (wired into the client and the test suite)
 
 ```
 https://itxcaamyiilvotfzctit.supabase.co/functions/v1/structure-report
 ```
 
-Diagnosing it: a GET returning 404 means the function was never deployed; a
-POST returning `500 server_misconfigured` means it is deployed but has no key;
-a GET returning `405 method_not_allowed` means the handler is alive.
+Diagnosing it by status code:
 
-**Then delete the old `structure-report` from the PM-Scheduler project**, so no
-forgotten endpoint is left holding an Anthropic key.
+| Response | Meaning |
+|---|---|
+| `404` | Function is not deployed |
+| `401` | Deployed, but `verify_jwt` is on — check `supabase/config.toml` |
+| `500 server_misconfigured` | Deployed, no `ANTHROPIC_API_KEY` set |
+| `405` on GET | Handler is alive and reachable |
+
+**Set the secrets** in the dashboard (Project Settings → Edge Functions →
+Secrets), or with the CLI — see below. Then **delete the old
+`structure-report` from the PM-Scheduler project**, so no forgotten endpoint is
+left holding an Anthropic key.
 
 **Set the secrets** (never paste the key into the app or the repo):
 

@@ -1,0 +1,20 @@
+# Supabase project config.
+#
+# The one setting that matters here is verify_jwt. Edge Functions default to
+# requiring a Supabase JWT in the Authorization header; this client is a static
+# PWA with no Supabase auth and sends no such header, so with the default on,
+# every structuring request comes back 401 and the app looks broken.
+#
+# It was originally deployed with the --no-verify-jwt flag, which works but is
+# invisible and easy to forget — one redeploy without it breaks the app. Pinning
+# it here means `supabase functions deploy structure-report` does the right
+# thing with no flag to remember.
+#
+# The endpoint is not unprotected as a result; it carries its own origin
+# allowlist, optional shared secret, and rate limiting. See
+# functions/structure-report/index.ts.
+
+project_id = "itxcaamyiilvotfzctit"
+
+[functions.structure-report]
+verify_jwt = false
