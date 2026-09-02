@@ -7,3 +7,4 @@ dist
 app.zip
 test-results
 playwright-report
+supabase/.temp
