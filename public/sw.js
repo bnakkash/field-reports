@@ -18,7 +18,7 @@
      caching a structuring response would be worse.
    ══════════════════════════════════════════════════════════════ */
 
-const VERSION = 'v4';
+const VERSION = 'v5';
 const SHELL = `fr-shell-${VERSION}`;
 const ASSETS = `fr-assets-${VERSION}`;
 const FONTS = `fr-fonts-${VERSION}`;
@@ -74,10 +74,16 @@ function timeout(ms) {
 
 async function networkFirstNavigation(event) {
   const cache = await caches.open(SHELL);
+  // Only the app's own entry point may be stored under INDEX. Caching whatever
+  // navigation happened to succeed meant that visiting any second page once,
+  // online, replaced the shell that every offline launch depends on — so the
+  // next launch from the home screen would open that page instead of the app.
+  const path = new URL(event.request.url).pathname;
+  const isShell = path === BASE || path === INDEX;
   try {
     const preload = event.preloadResponse ? await event.preloadResponse : null;
     const res = preload || (await Promise.race([fetch(event.request), timeout(NAV_TIMEOUT_MS)]));
-    if (res && res.ok) cache.put(INDEX, res.clone());
+    if (res && res.ok && isShell) cache.put(INDEX, res.clone());
     return res;
   } catch {
     // SPA on GitHub Pages: any route falls back to the cached shell.

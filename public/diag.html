@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Field Report — speech diagnostics</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: #0a0a0a; color: #e7e5e4; }
+  body {
+    font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: calc(1rem + env(safe-area-inset-top)) 1rem calc(2rem + env(safe-area-inset-bottom));
+    max-width: 46rem; margin: 0 auto;
+  }
+  h1 { font-size: 12px; letter-spacing: .3em; color: #fbbf24; font-weight: 600; margin: 0 0 .25rem; }
+  .sub { font-size: 12px; color: #78716c; margin: 0 0 1.25rem; line-height: 1.55; }
+  .card { border: 1px solid #292524; background: #0f0e0d; border-radius: 4px; padding: .85rem 1rem; margin-bottom: .85rem; }
+  .lbl { font-size: 9px; letter-spacing: .22em; color: #78716c; text-transform: uppercase; margin-bottom: .5rem; }
+  button {
+    font: 600 12px/1 ui-monospace, monospace; letter-spacing: .15em;
+    border: 0; border-radius: 4px; padding: 1rem; width: 100%; cursor: pointer;
+  }
+  #rec { background: #fbbf24; color: #0a0a0a; margin-bottom: .6rem; }
+  #rec.on { background: #ef4444; color: #fff; }
+  .ghost { background: transparent; border: 1px solid #44403c; color: #d6d3d1; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: .5rem; align-items: baseline; padding: .3rem 0; border-bottom: 1px solid #1c1917; }
+  .row:last-child { border-bottom: 0; }
+  .k { color: #a8a29e; font-size: 12px; }
+  .v { color: #fbbf24; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .v.bad { color: #ef4444; }
+  .v.good { color: #10b981; }
+  #log { max-height: 20rem; overflow-y: auto; font-size: 11.5px; line-height: 1.5; }
+  .e { padding: .28rem 0; border-bottom: 1px solid #1c1917; color: #a8a29e; word-break: break-word; }
+  .e b { color: #e7e5e4; font-weight: 600; }
+  .e .t { color: #57534e; }
+  .e.err b { color: #ef4444; }
+  .e.res b { color: #fbbf24; }
+  .alt { color: #38bdf8; }
+  .hint { font-size: 11.5px; color: #78716c; line-height: 1.6; }
+  ol { margin: .4rem 0 0; padding-left: 1.1rem; }
+  li { margin-bottom: .25rem; }
+</style>
+</head>
+<body>
+
+<h1>SPEECH DIAGNOSTICS</h1>
+<p class="sub">
+  Answers three things the app cannot assume about this device: whether iOS reports a
+  confidence score, whether it offers alternative guesses, and how often Safari ends a
+  recognition session on its own. Touches nothing the app stores.
+</p>
+
+<div class="card">
+  <div class="lbl">Test</div>
+  <div class="hint">
+    <ol>
+      <li>Tap START and say a few instrument tags — <b>"FT one oh one, LT two hundred, PT three ten"</b>.</li>
+      <li>Stay silent for about 15 seconds. This is the part that matters.</li>
+      <li>Say one more tag, then tap STOP.</li>
+    </ol>
+  </div>
+</div>
+
+<button id="rec">START</button>
+<button id="copy" class="ghost">COPY RESULTS</button>
+
+<div class="card" style="margin-top:.85rem">
+  <div class="lbl">Findings</div>
+  <div id="sum"></div>
+</div>
+
+<div class="card">
+  <div class="lbl">Event log</div>
+  <div id="log"></div>
+</div>
+
+<script>
+(function () {
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var recBtn = document.getElementById('rec');
+  var logEl = document.getElementById('log');
+  var sumEl = document.getElementById('sum');
+
+  var events = [];
+  var results = [];
+  var sessions = [];
+  var rec = null, running = false, t0 = 0, sessionStart = 0, lastError = null;
+
+  function now() { return Date.now() - t0; }
+  function ms(v) { return (v / 1000).toFixed(1) + 's'; }
+
+  function log(kind, text) {
+    events.push({ at: now(), kind: kind, text: text });
+    var d = document.createElement('div');
+    d.className = 'e ' + kind;
+    d.innerHTML = '<span class="t">' + ms(now()) + '</span> <b>' + kind.toUpperCase() + '</b> ' + text;
+    logEl.appendChild(d);
+    logEl.scrollTop = logEl.scrollHeight;
+    render();
+  }
+
+  function render() {
+    var withConf = results.filter(function (r) { return typeof r.confidence === 'number' && r.confidence > 0; });
+    var withAlts = results.filter(function (r) { return r.alternatives > 1; });
+    var confVals = withConf.map(function (r) { return r.confidence; });
+    var avg = confVals.length ? confVals.reduce(function (a, b) { return a + b; }, 0) / confVals.length : 0;
+    var durs = sessions.filter(function (s) { return s.end; }).map(function (s) { return s.end - s.start; });
+    var avgDur = durs.length ? durs.reduce(function (a, b) { return a + b; }, 0) / durs.length : 0;
+
+    function row(k, v, cls) {
+      return '<div class="row"><span class="k">' + k + '</span><span class="v ' + (cls || '') + '">' + v + '</span></div>';
+    }
+    sumEl.innerHTML =
+      row('API present', SR ? 'yes' : 'no', SR ? 'good' : 'bad') +
+      row('Final results', results.length) +
+      row('Confidence reported', withConf.length ? 'YES (' + withConf.length + '/' + results.length + ')' : 'no — always 0',
+          withConf.length ? 'good' : 'bad') +
+      row('Mean confidence', withConf.length ? avg.toFixed(3) : '—') +
+      row('Alternatives offered', withAlts.length ? 'YES (max ' + Math.max.apply(null, results.map(function (r) { return r.alternatives; })) + ')' : 'no — 1 only',
+          withAlts.length ? 'good' : 'bad') +
+      row('Sessions started', sessions.length) +
+      row('Mean session length', durs.length ? ms(avgDur) : '—') +
+      row('Ended by no-speech', events.filter(function (e) { return e.kind === 'err' && /no-speech/.test(e.text); }).length);
+  }
+
+  function build() {
+    var r = new SR();
+    r.continuous = true;
+    r.interimResults = true;
+    r.lang = 'en-US';
+    // The app requests only the top guess. Asking for five here is the point:
+    // if alternatives come back, a misheard tag may already be in the list.
+    r.maxAlternatives = 5;
+
+    r.onstart = function () {
+      sessionStart = now();
+      sessions.push({ start: sessionStart, end: null });
+      log('start', 'session ' + sessions.length);
+    };
+
+    r.onresult = function (e) {
+      for (var i = e.resultIndex; i < e.results.length; i++) {
+        var res = e.results[i];
+        if (!res.isFinal) continue;
+        var alts = [];
+        for (var j = 0; j < res.length; j++) alts.push(res[j].transcript);
+        var rec0 = {
+          text: res[0].transcript,
+          confidence: res[0].confidence,
+          alternatives: res.length,
+          alts: alts
+        };
+        results.push(rec0);
+        var extra = alts.length > 1
+          ? ' <span class="alt">alts: ' + alts.slice(1).join(' | ') + '</span>'
+          : '';
+        log('res', '"' + rec0.text.trim() + '" conf=' + String(rec0.confidence) +
+            ' n=' + rec0.alternatives + extra);
+      }
+    };
+
+    r.onerror = function (e) { lastError = e.error; log('err', e.error); };
+
+    r.onend = function () {
+      var s = sessions[sessions.length - 1];
+      if (s && !s.end) s.end = now();
+      log('end', 'after ' + (s ? ms(s.end - s.start) : '?') + (lastError ? ' (last error: ' + lastError + ')' : ' (no error)'));
+      lastError = null;
+      // Restart exactly the way the app does, so session churn here reflects
+      // what a real dictation experiences.
+      if (running) setTimeout(function () { try { r.start(); } catch (x) {} }, 250);
+    };
+
+    return r;
+  }
+
+  recBtn.onclick = function () {
+    if (!SR) { log('err', 'SpeechRecognition unavailable in this browser'); return; }
+    if (running) {
+      running = false;
+      try { rec.stop(); } catch (x) {}
+      recBtn.textContent = 'START';
+      recBtn.classList.remove('on');
+      log('stop', 'stopped by user');
+      return;
+    }
+    events = []; results = []; sessions = []; logEl.innerHTML = '';
+    t0 = Date.now();
+    running = true;
+    rec = build();
+    recBtn.textContent = 'STOP';
+    recBtn.classList.add('on');
+    try { rec.start(); } catch (x) { log('err', 'start failed: ' + x.message); }
+  };
+
+  document.getElementById('copy').onclick = function () {
+    var withConf = results.filter(function (r) { return typeof r.confidence === 'number' && r.confidence > 0; });
+    var maxAlts = results.length ? Math.max.apply(null, results.map(function (r) { return r.alternatives; })) : 0;
+    var out = [
+      'FIELD REPORT — SPEECH DIAGNOSTICS',
+      'ua: ' + navigator.userAgent,
+      'standalone: ' + (window.navigator.standalone === true ? 'yes (home screen)' : 'no (browser tab)'),
+      '',
+      'final results:        ' + results.length,
+      'confidence reported:  ' + (withConf.length ? 'YES ' + withConf.length + '/' + results.length : 'NO (always 0/absent)'),
+      'max alternatives:     ' + maxAlts,
+      'sessions started:     ' + sessions.length,
+      'session lengths:      ' + sessions.filter(function (s) { return s.end; })
+        .map(function (s) { return ms(s.end - s.start); }).join(', '),
+      '',
+      'RESULTS',
+      results.map(function (r) {
+        return '  conf=' + String(r.confidence) + ' n=' + r.alternatives + '  ' + JSON.stringify(r.alts);
+      }).join('\n'),
+      '',
+      'EVENTS',
+      events.map(function (e) { return '  ' + ms(e.at) + '  ' + e.kind + '  ' + e.text.replace(/<[^>]*>/g, ''); }).join('\n')
+    ].join('\n');
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(out).then(
+        function () { document.getElementById('copy').textContent = 'COPIED'; },
+        function () { window.prompt('Copy manually:', out); }
+      );
+    } else {
+      window.prompt('Copy manually:', out);
+    }
+  };
+
+  render();
+})();
+</script>
+</body>
+</html>
