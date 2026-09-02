@@ -92,7 +92,72 @@ Dates, quantities, part numbers and prices are the most commonly misheard: if on
 keep the row but put the raw spoken phrase in "action" rather than committing to a number.`,
 };
 
-const MODEL = Deno.env.get("ANTHROPIC_MODEL") ?? "claude-sonnet-4-5";
+// ─────────────────────────────────────────────────────────────
+// Plant vocabulary.
+//
+// The misreadings that matter in this app are not general English — they are a
+// closed set. "855 vacuum issues" is A55; "TE105 on 810" is A10. Speech-to-text
+// fails on these because a general model has never heard of them, and no amount
+// of prompting about carefulness fixes that. Naming the units does.
+//
+// Authoritative source is DataParc's ctc_v_processtags, which lists every tag at
+// the site; this is a snapshot of the 30 documented process units. Refresh it
+// here and redeploy — it is deliberately not a client input, since a vocabulary
+// the browser could edit is a vocabulary an attacker could edit.
+//
+// The final rule is the important one. Without it the model snaps every stray
+// number to the nearest unit, and "Tank 531" or "SOV 955" quietly becomes a unit
+// that was never mentioned.
+// ─────────────────────────────────────────────────────────────
+const PLANT_UNITS = [
+  "A10", "A30", "A40", "A50", "A55", "A60", "A70", "A80", "A90", "A95",
+  "A210", "A220", "A610",
+  "M100H", "M200", "M300A", "M300D", "M550", "M552", "M580", "M590",
+  "M601", "M602", "M603", "M650", "M850", "M860",
+  "V-452", "POR",
+];
+
+const PLANT_VOCAB = `
+
+---
+PLANT VOCABULARY
+
+These are the only process units at this site:
+${PLANT_UNITS.join(", ")}
+
+Speech-to-text mangles them consistently, because they are not words. Recognise
+these patterns and write the canonical form:
+- The leading "A" of an A-series unit is often swallowed into the number, so a
+  bare number reads as one: "855" is A55, "810" is A10, "830" is A30. Apply this
+  ONLY when the remaining digits are exactly an A-series unit number — 10, 30,
+  40, 50, 55, 60, 70, 80, 90, 95, 210, 220 or 610. "8955" matches nothing and
+  stays as heard.
+- Spacing is arbitrary: "A 55", "a55" and "855" are all A55.
+- "LA 90" or "el ay ninety" is most likely A90.
+- The M-series is ALWAYS spoken with its letter, and the letter survives
+  recognition. A number with no audible "M" is never an M-unit: "reels at 300 a
+  and B" is 300A and B, NOT M300A. "PCV 5520" is not M552.
+- Letters heard as words are still letters: "em five ninety" is M590.
+
+Instrument tags follow LETTERS + NUMBER, optionally hyphenated, commonly
+FT LT TT PT TE TI PI LI FI AT (transmitters and indicators), PCV LCV FCV TCV
+SOV (valves), TIC LIC FIC PIC (controllers). Normalise to uppercase with a
+hyphen: "ft one oh one" is FT-101, "tee ee one oh five" is TE-105.
+
+CRITICAL: this list is for recognising units that WERE said, never for
+inventing ones that were not. Equipment numbers are not unit numbers — tanks,
+pumps, valves and instruments have their own numbering ("Tank 531", "P-602",
+"SOV-955", "PCV-5520") and must be left exactly as heard.
+
+A number that is part of an instrument tag belongs to that tag and is never
+also a unit: in "TT 51 a 50 bottoms", the digits belong to the transmitter, so
+do not additionally emit A50.
+
+If a spoken number is not clearly one of the units above, leave it as it was
+said. A stray number forced onto the nearest unit is a fabricated location in a
+maintenance record, and is worse than leaving the number alone.`;
+
+const MODEL = Deno.env.get("ANTHROPIC_MODEL") ?? "claude-sonnet-5";
 const MAX_TRANSCRIPT = 40_000;   // characters
 const MAX_BODY = 200_000;        // bytes
 
@@ -175,8 +240,11 @@ Deno.serve(async (req: Request) => {
   const template = typeof body.template === "string" ? body.template : "";
   const transcript = typeof body.transcript === "string" ? body.transcript : "";
 
-  const system = TEMPLATES[template];
-  if (!system) return json({ error: "unknown_template" }, 400, cors);
+  const base = TEMPLATES[template];
+  if (!base) return json({ error: "unknown_template" }, 400, cors);
+  // Appended once here rather than pasted into each template — one place to
+  // edit when the plant gains or loses a unit.
+  const system = base + PLANT_VOCAB;
   if (!transcript.trim()) return json({ error: "empty_transcript" }, 400, cors);
   if (transcript.length > MAX_TRANSCRIPT) {
     return json(

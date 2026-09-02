@@ -78,6 +78,40 @@ callback attributed to THEM and the datasheet to ME, and a price the caller
 half-heard preserved as "possibly $32.40 a set, but line broke up so unclear"
 instead of being asserted.
 
+### The plant's own vocabulary is in the prompt
+
+The misreadings that matter here were never a general speech problem. "855
+vacuum issues" is A55; "TE105 on 810" is A10. They fail because a general model
+has never heard of these units — not because it needs training. The site has a
+finite, documented list of them, and DataParc's ctc_v_processtags is
+authoritative for every tag.
+
+So the structuring prompt now names all 30 process units and the standard
+instrument prefixes, with the recognition patterns speech-to-text actually
+produces. Appended once at the call site rather than pasted into each template,
+so there is one place to edit when the plant gains a unit. Deliberately not a
+client input — a vocabulary the browser could edit is one an attacker could
+edit.
+
+The hard part was restraint, not recall. A first version fixed A55 and A10 but
+started fabricating: "reels at 300 a" became M300A, and "TT 51 a 50" produced a
+phantom A50. The rules are now bounded — the swallowed-letter pattern applies
+only when the remaining digits are exactly an A-series number, the M-series is
+declared always audible, and digits belonging to an instrument tag are declared
+never also a unit. A fabricated location in a maintenance record is worse than
+a number left as it was heard.
+
+`npm run check:vocab` pins this against the real dictation. It calls the live
+endpoint, so it costs about five cents and stays outside `npm test`, which must
+remain free and offline. Its checks are split: required ones the vocabulary
+must satisfy every run, and advisory ones that depend on the model's judgement
+about whether a garbled fragment is worth keeping at all — reported, never
+fatal, because a model call is not a pure function.
+
+Also corrects the function's fallback model, still pinned to claude-sonnet-4-5
+in code while the deployed secret said otherwise — harmless until the day
+someone clears the secret.
+
 ### The phone's own doubt is now visible
 
 A device diagnostic (`public/diag.html`) settled two things this app had been

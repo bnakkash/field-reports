@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "playwright test"
+    "test": "playwright test",
+    "check:vocab": "node scripts/check-vocabulary.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.454.0",
