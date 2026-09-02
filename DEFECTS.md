@@ -5,14 +5,18 @@ because they involve your API key and your repo.
 
 ---
 
-> **Status, 2026-09-02.** The function lives in its own Supabase project,
-> `itxcaamyiilvotfzctit`, and **is deployed** there: a GET returns
-> `405 method_not_allowed` and a CORS preflight returns 204. The client and the
-> test suite point at it.
+> **Status, 2026-09-02 — this all works now.** The function is deployed to its
+> own Supabase project, `itxcaamyiilvotfzctit`, with `ANTHROPIC_API_KEY`,
+> `ANTHROPIC_MODEL` (`claude-sonnet-5`) and `ALLOWED_ORIGINS` set.
 >
-> **One thing is left — `ANTHROPIC_API_KEY`.** A POST still returns
-> `500 server_misconfigured`, so GENERATE REPORT will not work until you set it
-> (step 2). Recording and SAVE RAW work today.
+> Verified end to end against the live Pages site: a seeded raw capture through
+> STRUCTURE IT NOW returned `LT-200`/PASS, `PT-310`/FAIL, `FT-101`/BLOCK from
+> the spoken forms "two hundred", "three ten", "one oh one", and saving
+> replaced the original log entry rather than duplicating it. About a third of
+> a cent per report.
+>
+> The setup steps below are kept as the record of how it was built, and as the
+> runbook if it ever has to be rebuilt.
 
 ## 1. Rotate your Anthropic key — do this first
 

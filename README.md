@@ -26,6 +26,20 @@ microphone and service worker both work. **Do not test over your LAN IP** —
 `http://192.168.x.x` is not a secure context and both will silently refuse.
 Test on the phone via the deployed Pages URL instead.
 
+**GENERATE REPORT does not work from `npm run dev`.** The Edge Function's
+`ALLOWED_ORIGINS` lists the Pages origin only, so a request from
+`http://localhost:5178` comes back `403 origin_not_allowed` — the allowlist
+working as intended, not a bug. Recording, SAVE RAW, and everything else work
+locally. To structure locally too, add the dev origin:
+
+```bash
+supabase secrets set ALLOWED_ORIGINS=https://bnakkash.github.io,http://localhost:5178 \
+  --project-ref itxcaamyiilvotfzctit
+```
+
+The test suite is unaffected — it mocks the endpoint and never leaves the
+machine.
+
 ## Deploying
 
 1. Push to `main`.
