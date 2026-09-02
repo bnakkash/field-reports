@@ -63,6 +63,25 @@ Split the dictation into discrete observations. Don't invent detail that isn't t
 
 Return JSON ONLY:
 { "items": [ { "location": "unit/area/equipment or empty", "observation": "what was noted", "followup": "action or empty" } ] }`,
+
+  call: `You are structuring notes from a recorded phone call or meeting for a plant engineer.
+Extract one row per distinct topic, decision, or commitment. Merge fragments about the same thing.
+A call is not a walkdown: most of it is conversation, and only some of it is a record. Skip
+greetings, scheduling chatter and small talk entirely rather than making rows out of them.
+
+Return JSON ONLY:
+{ "items": [ { "who": "person or company", "topic": "what was discussed", "action": "what was agreed or happens next", "owner": "ME|THEM|BOTH|NONE" } ] }
+
+Owner rules: ME = the person taking these notes owes the action; THEM = the other party owes it;
+BOTH = jointly owned; NONE = informational, nobody owes anything.
+
+If a name was never stated, leave "who" empty rather than guessing. A wrong attribution in a
+record of who promised what is worse than a blank field.
+
+The input is raw speech-to-text of a live call and WILL contain misrecognitions, crosstalk, and
+both sides talking over each other. Do not invent detail to smooth over a garbled passage.
+Dates, quantities, part numbers and prices are the most commonly misheard: if one is unclear,
+keep the row but put the raw spoken phrase in "action" rather than committing to a number.`,
 };
 
 const MODEL = Deno.env.get("ANTHROPIC_MODEL") ?? "claude-sonnet-4-5";

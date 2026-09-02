@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Mic, Square, ChevronLeft, Copy, Check, Trash2, History, AlertTriangle,
   Loader2, ClipboardList, ListChecks, StickyNote, Plus, Radio, Download,
-  WifiOff, RotateCw, Play, Lock, Volume2, VolumeX, Keyboard
+  WifiOff, RotateCw, Play, Lock, Volume2, VolumeX, Keyboard, Phone
 } from 'lucide-react';
 
 // ═════════════════════════════════════════════════════════════
@@ -47,6 +47,16 @@ const SWIPE_EDGE_PX = 28;
 const SWIPE_MIN_DX = 64;
 const SWIPE_MAX_DY = 48;
 const SWIPE_MAX_MS = 700;
+
+// Recognition restart budgets.
+//
+// A session that ends because nobody spoke is NORMAL — Safari and Chrome both
+// end one after a few seconds of silence. That has to be budgeted separately
+// from a session that ended because something broke, or standing quiet while
+// walking between units spends the failure budget and retires transcription
+// for the rest of the walkdown while the UI still looks live.
+const MAX_FAILED_RESTARTS = 8;    // consecutive genuine errors before giving up
+const MAX_QUIET_RESTARTS = 300;   // ~40 min of unbroken silence; a backstop only
 
 const MAX_AUDIO_MS = 90 * 60 * 1000;   // hard stop at 90 min to bound memory
 const DRAFT_SAVE_MS = 4000;            // checkpoint interval while recording
@@ -109,6 +119,16 @@ const TEMPLATES = {
     fields: ['location', 'observation', 'followup'],
     enums: {},
     enumDefault: {},
+  },
+  call: {
+    id: 'call',
+    name: 'CALL NOTES',
+    code: 'CALL',
+    icon: Phone,
+    desc: 'Who · Topic · Action · Owner',
+    fields: ['who', 'topic', 'action', 'owner'],
+    enums: { owner: ['ME', 'THEM', 'BOTH', 'NONE'] },
+    enumDefault: { owner: 'NONE' },
   },
 };
 
@@ -308,7 +328,9 @@ export default function FieldReport() {
 
   const recRef = useRef(null);
   const shouldRestartRef = useRef(false);
-  const restartCountRef = useRef(0);
+  const failEndsRef = useRef(0);    // consecutive error-ended sessions
+  const quietEndsRef = useRef(0);   // consecutive silence-ended sessions
+  const endReasonRef = useRef(null); // why the session that just ended, ended
   const audioCtxRef = useRef(null);
   const analyserRef = useRef(null);
   const streamRef = useRef(null);
@@ -519,7 +541,9 @@ export default function FieldReport() {
   const startRecording = useCallback(async () => {
     setMicError(null);
     setSttDown(false);
-    restartCountRef.current = 0;
+    failEndsRef.current = 0;
+    quietEndsRef.current = 0;
+    endReasonRef.current = null;
 
     const ok = await startCapture();
     if (!ok) return;
@@ -553,7 +577,9 @@ export default function FieldReport() {
         else interimChunk += res[0].transcript;
       }
       if (finalChunk) {
-        restartCountRef.current = 0;
+        // Real speech clears both budgets: whatever came before was survivable.
+        failEndsRef.current = 0;
+        quietEndsRef.current = 0;
         // Only normalize the incoming chunk — the old code re-collapsed
         // whitespace across the whole accumulated transcript on every result.
         const clean = finalChunk.replace(/\s+/g, ' ');
@@ -564,30 +590,50 @@ export default function FieldReport() {
     };
 
     rec.onend = () => {
-      if (shouldRestartRef.current) {
-        // Safari ends the session on its own; restart to keep going.
-        // Bounded, so a persistent failure can't spin forever on battery.
-        if (restartCountRef.current > 40) {
-          shouldRestartRef.current = false;
-          setSttDown(true);
-          setMicError('Speech service kept dropping. Audio is still recording — stop when done and transcribe later.');
-          return;
-        }
-        restartCountRef.current += 1;
-        setTimeout(() => { try { rec.start(); } catch { /* already running */ } }, 250);
-      } else {
-        // Stopping mid-sentence used to throw away whatever was still interim.
-        // Chrome normally promotes that utterance to a final result before
-        // onend fires — in which case interimRef is already empty and nothing
-        // is appended — so this recovers the Safari case without double-writing.
-        const tail = interimRef.current.trim();
-        interimRef.current = '';
-        if (tail) setTranscript((t) => (t ? t.replace(/\s+$/, '') + ' ' : '') + tail + ' ');
-        setInterim('');
+      // Promote any still-interim text on EVERY end, not just the last one.
+      // Safari ends sessions mid-walkdown, and a phrase caught mid-utterance
+      // would otherwise vanish from the transcript. When the engine already
+      // finalised it, interimRef is empty and this is a no-op — which is what
+      // keeps Chrome from writing the same words twice.
+      const tail = interimRef.current.trim();
+      interimRef.current = '';
+      if (tail) setTranscript((t) => (t ? t.replace(/\s+$/, '') + ' ' : '') + tail + ' ');
+      setInterim('');
+
+      if (!shouldRestartRef.current) return;
+
+      const reason = endReasonRef.current;
+      endReasonRef.current = null;
+      // No error, 'no-speech' and 'aborted' all mean "nothing was said", not
+      // "something is wrong". Only the rest count against the failure budget.
+      const quiet = !reason || reason === 'no-speech' || reason === 'aborted';
+
+      if (quiet) { quietEndsRef.current += 1; failEndsRef.current = 0; }
+      else failEndsRef.current += 1;
+
+      if (failEndsRef.current > MAX_FAILED_RESTARTS) {
+        shouldRestartRef.current = false;
+        setSttDown(true);
+        setMicError('Speech service kept dropping. Audio is still recording — stop when done and transcribe later.');
+        return;
       }
+      if (quietEndsRef.current > MAX_QUIET_RESTARTS) {
+        shouldRestartRef.current = false;
+        setSttDown(true);
+        setMicError('No speech heard for a long while, so transcription stopped to save battery. Audio is still recording.');
+        return;
+      }
+
+      // Back off on real failures; a silence restart should be immediate so a
+      // resumed sentence loses as little as possible.
+      const delay = quiet ? 250 : Math.min(2000, 250 * failEndsRef.current);
+      setTimeout(() => { try { rec.start(); } catch { /* already running */ } }, delay);
     };
 
     rec.onerror = (e) => {
+      // onend fires right after and needs to know whether this was a real
+      // failure or just silence.
+      endReasonRef.current = e.error;
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
         setMicError('Microphone permission denied. Enable in Settings → Safari → Microphone.');
         shouldRestartRef.current = false;
@@ -1613,6 +1659,10 @@ function ItemCard({ idx, item, template, onUpdate, onRemove }) {
     if (v === 'FAIL' || v === 'BLOCK' || v === 'HIGH') return '#ef4444';
     if (v === 'PASS' || v === 'LOW') return '#10b981';
     if (v === 'MED' || v === 'PEND') return '#fbbf24';
+    // Call notes: amber for anything you owe, so a scan of the list shows
+    // your commitments first.
+    if (v === 'ME' || v === 'BOTH') return '#fbbf24';
+    if (v === 'THEM') return '#38bdf8';
     return '#78716c';
   };
 

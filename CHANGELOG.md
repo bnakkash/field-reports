@@ -58,6 +58,44 @@ Also fixed: the record button read TAP TO RESUME whenever the transcript had
 text, which in silent mode meant offering to resume a recording that never
 started. It now keys off whether audio actually exists.
 
+### CALL NOTES template
+
+A fourth template, for a recorded phone call rather than a walkdown — the shape
+Plaud and similar recorders produce. Fields are who / topic / action / owner,
+with owner an enum of ME · THEM · BOTH · NONE, because the thing worth keeping
+out of a call is who owes what. Anything you owe renders amber so a glance down
+the list finds your commitments.
+
+The prompt is explicit that a call is mostly conversation and only partly a
+record: greetings, scheduling chatter and small talk are dropped rather than
+turned into rows. It is also told to leave "who" blank when no name was said —
+a wrong attribution in a record of who promised what is worse than a blank
+field — and to keep a garbled price or date as the raw spoken phrase rather
+than committing to a number.
+
+Verified against a real call transcript: five rows, small talk discarded, the
+callback attributed to THEM and the datasheet to ME, and a price the caller
+half-heard preserved as "possibly $32.40 a set, but line broke up so unclear"
+instead of being asserted.
+
+### Dead air no longer retires transcription
+
+Recognition sessions end on their own after a few seconds of silence — that is
+normal, not a failure. Both kinds of ending spent the same 40-restart budget,
+and only actual speech reset it, so standing quiet between units could exhaust
+it and stop transcription for the rest of the walkdown. The banner said so, but
+a phone in a pocket does not show banners.
+
+Silence-ended and error-ended sessions are now budgeted separately: silence
+restarts immediately and does not count against the failure budget, real errors
+get eight attempts with a backoff, and an unbroken-silence backstop of ~40
+minutes exists only to stop a pathological loop.
+
+Pending interim text is also promoted to the transcript on *every* session end
+rather than only the last, so a phrase caught mid-utterance when Safari drops
+the session is no longer lost. When the engine already finalised it the buffer
+is empty and nothing is written twice.
+
 ## v0.3
 
 ### The repo now builds the site
