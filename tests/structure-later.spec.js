@@ -169,7 +169,8 @@ test('a raw capture can be structured later, and replaces itself in the log', as
 
     await expect(page.getByText(/STEP 03 \/ REVIEW · 3 ITEMS/)).toBeVisible();
     await expect(page.getByText('⚑ CHECK TAG')).toHaveCount(1);
-    await expect(page.getByText(/1 tag did not match/)).toBeVisible();
+    await expect(page.getByText(/1 row flagged below/)).toBeVisible();
+    await expect(page.getByText(/mishears digits/)).toBeVisible();
 
     // coerceItems: lowercase normalised, missing value defaulted — never blank.
     const statuses = await page.locator('select').evaluateAll((els) => els.map((e) => e.value));

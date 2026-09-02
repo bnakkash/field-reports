@@ -78,6 +78,27 @@ callback attributed to THEM and the datasheet to ME, and a price the caller
 half-heard preserved as "possibly $32.40 a set, but line broke up so unclear"
 instead of being asserted.
 
+### CALL NOTES admits when it cannot tell who owes something
+
+Tested against a real recorded call, the first version confidently assigned the
+other party's commitments to ME and missed one that genuinely was the
+note-taker's. The cause is structural rather than a prompt weakness: a
+single-channel recording has no speaker labels, both sides say "I", and nothing
+in the transcript reliably identifies which one is holding the phone. Asked to
+choose, the model guesses at roughly a coin flip.
+
+So it is no longer asked to choose. `owner` gains UNCLEAR, which is now the
+default, and the prompt is explicit that ME or THEM may only be used when the
+transcript itself settles it. Re-run on the same call, every ownership claim it
+could not support came back UNCLEAR instead of wrong.
+
+Flagged rows reuse the machinery the loop template already uses for
+unverifiable tags — amber border, a badge, and a banner — with the label and
+explanation now coming from the template, so a call says WHO OWES THIS? rather
+than CHECK TAG. This is the same principle as never guessing a tag digit: an
+admitted unknown that gets reviewed beats a confident answer that is wrong half
+the time, especially in a record of who promised what.
+
 ### Dead air no longer retires transcription
 
 Recognition sessions end on their own after a few seconds of silence — that is

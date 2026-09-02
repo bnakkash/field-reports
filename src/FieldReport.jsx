@@ -127,8 +127,17 @@ const TEMPLATES = {
     icon: Phone,
     desc: 'Who · Topic · Action · Owner',
     fields: ['who', 'topic', 'action', 'owner'],
-    enums: { owner: ['ME', 'THEM', 'BOTH', 'NONE'] },
-    enumDefault: { owner: 'NONE' },
+    // UNCLEAR is the default on purpose. A single-channel recording carries no
+    // speaker labels, so nothing in the transcript reliably says which "I" is
+    // you — asked to choose, the model guesses at about a coin flip, and a
+    // confident wrong owner is worse than an admitted unknown in a record of
+    // who promised what. Same principle as never guessing a tag digit.
+    enums: { owner: ['ME', 'THEM', 'BOTH', 'UNCLEAR', 'NONE'] },
+    enumDefault: { owner: 'UNCLEAR' },
+    flagValues: { owner: ['UNCLEAR'] },
+    suspectLabel: 'WHO OWES THIS?',
+    suspectNote:
+      'the recording has one channel and no speaker labels, so the model cannot always tell which "I" is you. Set the owner before this becomes a record of who promised what.',
   },
 };
 
@@ -271,9 +280,13 @@ function coerceItems(raw, tpl) {
       if (tpl.fields.includes('tag')) out.tag = out.tag.toUpperCase().replace(/\s+/g, '');
       // Flag anything that doesn't look like a real instrument tag so it
       // surfaces for review rather than sliding into a report unnoticed.
-      out._suspect = Object.entries(tpl.validate || {}).some(
-        ([f, re]) => out[f] && !re.test(out[f])
-      );
+      // Two ways a row earns a review flag: a field that doesn't match its
+      // expected shape (a tag), or an enum that landed on a value meaning
+      // "couldn't tell" (an owner). Both mean the same thing to the user —
+      // look at this one before you trust it.
+      out._suspect =
+        Object.entries(tpl.validate || {}).some(([f, re]) => out[f] && !re.test(out[f])) ||
+        Object.entries(tpl.flagValues || {}).some(([f, vals]) => vals.includes(out[f]));
       return out;
     })
     .filter((o) => tpl.fields.some((f) => o[f]));
@@ -1596,8 +1609,9 @@ function ReviewView({ template, items, setItems, onSave, onCopy, onCSV, copied, 
 
       {suspects > 0 && (
         <div className="mb-4 p-3 border border-amber-500/40 bg-amber-500/5 rounded-sm text-xs text-amber-200/90" style={{ fontFamily: FONT_MONO }}>
-          {suspects} tag{suspects !== 1 ? 's' : ''} did not match the expected format and {suspects !== 1 ? 'are' : 'is'} flagged below.
-          Speech-to-text mishears digits — check these against the loop sheet before this leaves your phone.
+          {suspects} row{suspects !== 1 ? 's' : ''} flagged below —{' '}
+          {template.suspectNote ||
+            'speech-to-text mishears digits; check these against the loop sheet before this leaves your phone.'}
         </div>
       )}
 
@@ -1659,8 +1673,9 @@ function ItemCard({ idx, item, template, onUpdate, onRemove }) {
     if (v === 'FAIL' || v === 'BLOCK' || v === 'HIGH') return '#ef4444';
     if (v === 'PASS' || v === 'LOW') return '#10b981';
     if (v === 'MED' || v === 'PEND') return '#fbbf24';
-    // Call notes: amber for anything you owe, so a scan of the list shows
-    // your commitments first.
+    // Call notes: amber for anything you owe, so a scan finds your own
+    // commitments first; red for an owner nobody has confirmed yet.
+    if (v === 'UNCLEAR') return '#ef4444';
     if (v === 'ME' || v === 'BOTH') return '#fbbf24';
     if (v === 'THEM') return '#38bdf8';
     return '#78716c';
@@ -1674,7 +1689,9 @@ function ItemCard({ idx, item, template, onUpdate, onRemove }) {
       <div className="flex items-center justify-between mb-2">
         <span className="tracking-widest text-stone-600" style={{ fontFamily: FONT_MONO, fontSize: '10px' }}>
           [{String(idx + 1).padStart(2, '0')}]
-          {item._suspect && <span className="ml-2 text-amber-400">⚑ CHECK TAG</span>}
+          {item._suspect && (
+            <span className="ml-2 text-amber-400">⚑ {template.suspectLabel || 'CHECK TAG'}</span>
+          )}
         </span>
         <button
           onClick={onRemove}

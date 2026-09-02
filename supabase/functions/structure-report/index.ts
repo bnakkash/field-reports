@@ -73,7 +73,15 @@ Return JSON ONLY:
 { "items": [ { "who": "person or company", "topic": "what was discussed", "action": "what was agreed or happens next", "owner": "ME|THEM|BOTH|NONE" } ] }
 
 Owner rules: ME = the person taking these notes owes the action; THEM = the other party owes it;
-BOTH = jointly owned; NONE = informational, nobody owes anything.
+BOTH = jointly owned; NONE = informational, nobody owes anything; UNCLEAR = an action is owed but
+the transcript does not establish by whom.
+
+CRITICAL: the transcript is a single channel with no speaker labels, and both sides say "I". You
+usually CANNOT tell which speaker is the note-taker. Use ME or THEM only when the transcript
+itself settles it beyond doubt — for example the other party names themselves, or the note-taker
+is clearly answering a question put to them. Otherwise use UNCLEAR. Guessing produces a confident
+record of who promised what that is wrong half the time, which is far worse than one marked for
+review. When in any doubt, UNCLEAR.
 
 If a name was never stated, leave "who" empty rather than guessing. A wrong attribution in a
 record of who promised what is worse than a blank field.
