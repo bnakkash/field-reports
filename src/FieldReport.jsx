@@ -58,6 +58,17 @@ const SWIPE_MAX_MS = 700;
 const MAX_FAILED_RESTARTS = 8;    // consecutive genuine errors before giving up
 const MAX_QUIET_RESTARTS = 300;   // ~40 min of unbroken silence; a backstop only
 
+// iOS reports a confidence score per recognised phrase, and this is calibrated
+// against a real walkdown dictation on iOS 18.7: the one unusable phrase scored
+// 0.38, a wrong unit tag ("855" for A55) scored 0.90, and every correct phrase
+// scored 0.94 or better. Below this line, treat the words as unverified.
+const LOW_CONFIDENCE = 0.9;
+
+// How many guesses to ask the engine for. On the same test iOS returned up to
+// five, and the correct reading of a misheard tag was sitting in the list —
+// which is the whole reason this is worth keeping.
+const MAX_ALTERNATIVES = 5;
+
 const MAX_AUDIO_MS = 90 * 60 * 1000;   // hard stop at 90 min to bound memory
 const DRAFT_SAVE_MS = 4000;            // checkpoint interval while recording
 
@@ -302,6 +313,9 @@ function getRecognizer() {
   r.continuous = true;
   r.interimResults = true;
   r.lang = 'en-US';
+  // Default is 1. Asking for more costs nothing and is what makes a misheard
+  // tag repairable by tapping rather than retyping.
+  r.maxAlternatives = MAX_ALTERNATIVES;
   return r;
 }
 
@@ -338,6 +352,11 @@ export default function FieldReport() {
   const [passphrase, setPassphrase] = useState('');
   const [needKey, setNeedKey] = useState(false);
   const [silent, setSilent] = useState(false);
+  // Recognised phrases, each with what the engine thought of it. The transcript
+  // is derived from these while they are in step; a free-text edit breaks that
+  // correspondence for good, which chunksStale records.
+  const [chunks, setChunks] = useState([]);
+  const [chunksStale, setChunksStale] = useState(false);
 
   const recRef = useRef(null);
   const shouldRestartRef = useRef(false);
@@ -358,6 +377,15 @@ export default function FieldReport() {
   const templateRef = useRef(null);
 
   useEffect(() => { transcriptRef.current = transcript; }, [transcript]);
+
+  // While chunks are in step with the transcript they are the source of truth,
+  // so choosing a different alternative rewrites the transcript for free. Once
+  // the text has been hand-edited the correspondence is gone and the transcript
+  // stands on its own.
+  useEffect(() => {
+    if (chunksStale || !chunks.length) return;
+    setTranscript(chunks.map((c) => c.text).join(' ').replace(/\s+/g, ' ').trim() + ' ');
+  }, [chunks, chunksStale]);
   useEffect(() => { templateRef.current = template; }, [template]);
 
   // ─── fonts ───
@@ -558,6 +586,13 @@ export default function FieldReport() {
     quietEndsRef.current = 0;
     endReasonRef.current = null;
 
+    // Resuming onto text that has no chunks behind it (a restored draft, or a
+    // saved report being re-structured): fold it in as one fixed chunk so the
+    // derivation below cannot drop it on the first new phrase.
+    if (transcriptRef.current.trim() && !chunks.length && !chunksStale) {
+      setChunks([{ id: uid('c'), text: transcriptRef.current.trim(), conf: null, alts: [] }]);
+    }
+
     const ok = await startCapture();
     if (!ok) return;
     acquireWake();
@@ -582,21 +617,29 @@ export default function FieldReport() {
     recRef.current = rec;
 
     rec.onresult = (e) => {
-      let finalChunk = '';
+      const finals = [];
       let interimChunk = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const res = e.results[i];
-        if (res.isFinal) finalChunk += res[0].transcript + ' ';
-        else interimChunk += res[0].transcript;
+        if (!res.isFinal) { interimChunk += res[0].transcript; continue; }
+        // Keep every guess the engine offered, not just its favourite.
+        const alts = [];
+        for (let a = 0; a < res.length; a++) {
+          const t = (res[a].transcript || '').replace(/\s+/g, ' ').trim();
+          if (t && !alts.includes(t)) alts.push(t);
+        }
+        finals.push({
+          id: uid('c'),
+          text: alts[0] || '',
+          conf: typeof res[0].confidence === 'number' ? res[0].confidence : null,
+          alts,
+        });
       }
-      if (finalChunk) {
+      if (finals.length) {
         // Real speech clears both budgets: whatever came before was survivable.
         failEndsRef.current = 0;
         quietEndsRef.current = 0;
-        // Only normalize the incoming chunk — the old code re-collapsed
-        // whitespace across the whole accumulated transcript on every result.
-        const clean = finalChunk.replace(/\s+/g, ' ');
-        setTranscript((t) => (t ? t.replace(/\s+$/, '') + ' ' : '') + clean.trim() + ' ');
+        setChunks((cs) => cs.concat(finals.filter((f) => f.text)));
       }
       interimRef.current = interimChunk;
       setInterim(interimChunk);
@@ -610,7 +653,9 @@ export default function FieldReport() {
       // keeps Chrome from writing the same words twice.
       const tail = interimRef.current.trim();
       interimRef.current = '';
-      if (tail) setTranscript((t) => (t ? t.replace(/\s+$/, '') + ' ' : '') + tail + ' ');
+      // Recorded as a chunk with no confidence and no alternatives, because the
+      // engine never finalised it — it is words we rescued, not words it stood behind.
+      if (tail) setChunks((cs) => cs.concat([{ id: uid('c'), text: tail, conf: null, alts: [tail] }]));
       setInterim('');
 
       if (!shouldRestartRef.current) return;
@@ -673,7 +718,7 @@ export default function FieldReport() {
       await stopCapture();
       releaseWake();
     }
-  }, [startCapture, stopCapture, acquireWake, releaseWake, saveDraft, silent]);
+  }, [startCapture, stopCapture, acquireWake, releaseWake, saveDraft, silent, chunks.length, chunksStale]);
 
   const stopRecording = useCallback(async () => {
     shouldRestartRef.current = false;
@@ -780,6 +825,8 @@ export default function FieldReport() {
     setSttDown(false);
     setMicError(null);
     setRestructureId(null);
+    setChunks([]);
+    setChunksStale(false);
     pendingAudioRef.current = null;
     setPendingAudio(false);
     interimRef.current = '';
@@ -822,6 +869,9 @@ export default function FieldReport() {
       createdAt: existing ? existing.createdAt : new Date().toISOString(),
       items: items || [],
       transcript,
+      // Kept so a report saved raw can still be repaired when it is structured
+      // later — the alternatives are only offered once, at recognition time.
+      chunks: chunksStale ? [] : chunks,
       hasAudio,
       raw: !!isRaw,
     };
@@ -842,7 +892,7 @@ export default function FieldReport() {
     clearDraft();
     reset();
     setView('history');
-  }, [template, transcript, reports, clearDraft, reset, restructureId]);
+  }, [template, transcript, reports, clearDraft, reset, restructureId, chunks, chunksStale]);
 
   const handleSave = useCallback(() => persistReport(structured, false), [persistReport, structured]);
   const handleSaveRaw = useCallback(() => persistReport([], true), [persistReport]);
@@ -855,6 +905,12 @@ export default function FieldReport() {
     setNeedKey(false);
     structure(k);
   }, [structure]);
+
+  // Swapping in one of the engine's other guesses. The transcript rebuilds
+  // itself from chunks, so nothing here has to touch the text directly.
+  const pickAlternative = useCallback((id, text) => {
+    setChunks((cs) => cs.map((c) => (c.id === id ? { ...c, text, repaired: true } : c)));
+  }, []);
 
   const toggleSilent = useCallback(() => {
     setSilent((v) => { kvSet(SILENT_KEY, !v); return !v; });
@@ -900,6 +956,8 @@ export default function FieldReport() {
   const restructure = useCallback((report) => {
     setTemplate(report.template);
     setTranscript(report.transcript || '');
+    setChunks(Array.isArray(report.chunks) ? report.chunks : []);
+    setChunksStale(!Array.isArray(report.chunks) || !report.chunks.length);
     setStructured(null);
     setApiError(null);
     setMicError(null);
@@ -1056,7 +1114,7 @@ export default function FieldReport() {
               audioLevel={audioLevel}
               onStart={startRecording}
               onStop={stopRecording}
-              onClear={() => { setTranscript(''); clearDraft(); }}
+              onClear={() => { setTranscript(''); setChunks([]); setChunksStale(false); clearDraft(); }}
               onStructure={structure}
               onSaveRaw={handleSaveRaw}
               processing={processing}
@@ -1071,7 +1129,9 @@ export default function FieldReport() {
               onDismissKey={() => setNeedKey(false)}
               silent={silent}
               onToggleSilent={toggleSilent}
-              onTranscriptEdit={setTranscript}
+              chunks={chunksStale ? [] : chunks}
+              onPickAlternative={pickAlternative}
+              onTranscriptEdit={(v) => { setChunksStale(true); setTranscript(v); }}
               micHeld={micHeld}
               onReleaseMic={releaseMic}
             />
@@ -1273,13 +1333,16 @@ function RecordView({
   onStart, onStop, onClear, onStructure, onSaveRaw, processing,
   apiError, micError, sttDown, online, hasAudio, onTranscriptEdit,
   micHeld, onReleaseMic, restructuring, needKey, onSubmitKey, onDismissKey,
-  silent, onToggleSilent,
+  silent, onToggleSilent, chunks, onPickAlternative,
 }) {
   const hasContent = transcript.trim().length > 0;
   const [editing, setEditing] = useState(false);
   // Silent mode has no live transcript to read back, so the field is always a
   // text area — type, or use the keyboard's own dictation, which is quiet.
   const typing = silent || editing;
+  const uncertain = chunks.filter(
+    (c) => !c.repaired && typeof c.conf === 'number' && c.conf < LOW_CONFIDENCE
+  ).length;
 
   return (
     <div className="pt-6 flex flex-1 flex-col">
@@ -1358,6 +1421,16 @@ function RecordView({
         </div>
       )}
 
+      {uncertain > 0 && !recording && (
+        <div className="mb-3 p-3 border border-amber-500/40 bg-amber-500/5 rounded-sm flex gap-2">
+          <AlertTriangle size={13} className="text-amber-400 mt-0.5 flex-shrink-0" />
+          <div className="text-xs text-amber-200/90 leading-relaxed" style={{ fontFamily: FONT_MONO }}>
+            <strong>{uncertain} PHRASE{uncertain !== 1 ? 'S' : ''} THE PHONE WAS UNSURE OF</strong>, underlined
+            below. Tap one to see what else it heard — a misread tag is often already in the list.
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 mb-6">
         <div
           className="p-4 border border-stone-800 bg-stone-950 rounded-sm relative"
@@ -1373,7 +1446,14 @@ function RecordView({
                 : 'Press record and describe what you see. Tap stop when done.'}
             </div>
           )}
-          {!typing && hasContent && (
+          {!typing && hasContent && chunks.length > 0 && (
+            <div className="text-sm text-stone-200 leading-relaxed">
+              {chunks.map((c) => (
+                <TranscriptChunk key={c.id} chunk={c} onPick={onPickAlternative} />
+              ))}
+            </div>
+          )}
+          {!typing && hasContent && chunks.length === 0 && (
             <div className="text-sm text-stone-200 leading-relaxed whitespace-pre-wrap">
               {transcript}
             </div>
@@ -1446,6 +1526,8 @@ function RecordView({
         <button
           onClick={recording ? onStop : onStart}
           disabled={processing}
+          aria-label={recording ? 'Stop recording' : 'Start recording'}
+          aria-pressed={recording}
           className="relative w-24 h-24 rounded-full border-2 flex items-center justify-center transition-all active:scale-95"
           style={{
             borderColor: recording ? '#ef4444' : '#fbbf24',
@@ -1576,6 +1658,78 @@ function PassphraseGate({ onSubmit, onDismiss }) {
         </button>
       </div>
     </form>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════
+// One recognised phrase, and what the engine thought of it.
+//
+// iOS returns a confidence score and up to five ranked guesses per phrase, and
+// the app used to discard both. On a real walkdown the worst phrase scored 0.38
+// while every good one scored 0.94+, and the correct reading of a misheard unit
+// tag was sitting in the alternatives — so this is a two-tap repair for the
+// exact failure that matters most: a wrong digit in a tag number.
+// ═════════════════════════════════════════════════════════════
+function TranscriptChunk({ chunk, onPick }) {
+  const [open, setOpen] = useState(false);
+  const unsure = typeof chunk.conf === 'number' && chunk.conf < LOW_CONFIDENCE;
+  const options = chunk.alts && chunk.alts.length > 1 ? chunk.alts : null;
+
+  // Nothing to say about it and nothing to offer: render as plain text.
+  if (!unsure && !options) return <span>{chunk.text} </span>;
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => options && setOpen((v) => !v)}
+        disabled={!options}
+        aria-label={`${chunk.text} — ${unsure ? 'low confidence' : 'alternatives available'}`}
+        className="text-left align-baseline disabled:cursor-default"
+        style={{
+          background: 'none',
+          border: 0,
+          padding: 0,
+          font: 'inherit',
+          color: unsure ? '#fcd34d' : 'inherit',
+          textDecorationLine: 'underline',
+          textDecorationStyle: unsure ? 'dashed' : 'dotted',
+          textDecorationColor: unsure ? 'rgba(251,191,36,.75)' : 'rgba(120,113,108,.5)',
+          textUnderlineOffset: '3px',
+          cursor: options ? 'pointer' : 'default',
+        }}
+      >
+        {chunk.text}
+      </button>
+      {chunk.repaired && <span className="text-emerald-400" style={{ fontSize: '10px' }}> ✓</span>}{' '}
+      {open && options && (
+        <span className="block my-2 p-2 border border-stone-700 bg-stone-900 rounded-sm">
+          <span
+            className="block text-stone-500 mb-1.5"
+            style={{ fontFamily: FONT_MONO, fontSize: '9px', letterSpacing: '0.2em' }}
+          >
+            {typeof chunk.conf === 'number'
+              ? `PHONE WAS ${Math.round(chunk.conf * 100)}% SURE · ${options.length} READINGS`
+              : `${options.length} READINGS`}
+          </span>
+          {options.map((a) => (
+            <button
+              key={a}
+              type="button"
+              onClick={() => { onPick(chunk.id, a); setOpen(false); }}
+              className={`block w-full text-left px-2 py-2 rounded-sm border ${
+                a === chunk.text
+                  ? 'text-amber-300 border-amber-400/40 bg-amber-400/5'
+                  : 'text-stone-300 border-transparent hover:border-stone-700'
+              }`}
+              style={{ fontFamily: FONT_MONO, fontSize: '12px', lineHeight: 1.5 }}
+            >
+              {a === chunk.text ? '● ' : '○ '}{a}
+            </button>
+          ))}
+        </span>
+      )}
+    </>
   );
 }
 

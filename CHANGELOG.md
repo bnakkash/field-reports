@@ -78,6 +78,33 @@ callback attributed to THEM and the datasheet to ME, and a price the caller
 half-heard preserved as "possibly $32.40 a set, but line broke up so unclear"
 instead of being asserted.
 
+### The phone's own doubt is now visible
+
+A device diagnostic (`public/diag.html`) settled two things this app had been
+guessing about. On iOS 18.7, WebKit **does** report a confidence score — the
+concern that it always returns 0 was unfounded — and it offers up to five ranked
+readings per phrase. Both were being discarded: the code read `res[0].transcript`
+and nothing else, and never raised `maxAlternatives` above its default of 1.
+
+On a real walkdown dictation the split was stark. The one unusable phrase scored
+0.38 while every good one scored 0.94 or better, and where a unit tag came back
+wrong — "855 vacuum issues" for what should read A55 — the correct reading was
+sitting in the alternatives the app had thrown away.
+
+So it keeps them. Phrases below 0.9 are underlined in the transcript, and tapping
+any phrase shows what else the phone heard, with the score. Choosing a different
+reading rewrites the transcript, which is now derived from the recognised phrases
+rather than accumulated as loose text — so a repair reaches the words the model
+actually sees. Repaired phrases stop counting toward the banner, which tracks what
+is left rather than what once was.
+
+This is a two-tap correction for the failure that matters most in this app: a
+wrong digit in an instrument tag, on a phone, at the equipment. Hand-editing was
+always possible; knowing *where* to look was not.
+
+Also: the record button had no accessible name — an icon in an unlabelled
+button, on the app's primary control.
+
 ### CALL NOTES admits when it cannot tell who owes something
 
 Tested against a real recorded call, the first version confidently assigned the

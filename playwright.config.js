@@ -22,12 +22,24 @@ export default defineConfig({
     // 414×896 — iPhone 11/XR, the size the UI was designed against.
     viewport: { width: 414, height: 896 },
     deviceScaleFactor: 2,
-    permissions: ['clipboard-read', 'clipboard-write'],
+    permissions: ['clipboard-read', 'clipboard-write', 'microphone'],
     trace: 'retain-on-failure',
   },
 
   projects: [
-    { name: 'phone', use: { ...devices['Desktop Chrome'], viewport: { width: 414, height: 896 } } },
+    {
+      name: 'phone',
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 414, height: 896 },
+        // A fake capture device, so the recording path is exercisable without a
+        // microphone and without a permission prompt. Speech recognition is
+        // stubbed per-test; this only satisfies getUserMedia and MediaRecorder.
+        launchOptions: {
+          args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],
+        },
+      },
+    },
   ],
 
   webServer: {
