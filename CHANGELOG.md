@@ -25,6 +25,39 @@ storage, and a test asserts the shipped bundle contains nothing key-shaped.
 This stops anyone who finds the URL. It is not authentication, and it does not
 replace a spend limit — see README for the honest boundary.
 
+### Silent mode
+
+The app has never played a sound — nothing in it touches an audio output, and
+the `AudioContext` drives the level meter without being connected to one. The
+chimes are iOS's: Safari plays the system dictation tone every time
+`SpeechRecognition` starts or stops, and it ends recognition sessions on its
+own throughout a long dictation, so each restart chimes again.
+
+A web page cannot suppress a system sound, so the only available lever is not
+to run the recognizer. Silent mode does exactly that: no recognizer is ever
+constructed, audio still records, and the transcript becomes a text field you
+type into — or dictate into with the keyboard's own microphone, which is quiet.
+Structuring, review and save are unchanged. The preference persists per device.
+
+A test asserts zero `SpeechRecognition` constructions in silent mode, since
+"we didn't start it" is the entire feature.
+
+### Edge-swipe back
+
+Swiping right from the left edge goes back — detail to log, log to home, review
+to transcript. It mirrors the iOS gesture, which is what a thumb reaches for.
+
+Deliberately edge-anchored rather than a free-form swipe: the gesture must
+begin within 28px of the left edge, travel at least 64px, stay within 48px
+vertically, and complete inside 700ms. Anything looser fires while selecting
+transcript text or dragging the audio scrubber. It is also inert while
+recording — losing a dictation to a stray thumb is far worse than having no
+gesture. The negative cases are tested alongside the positive one.
+
+Also fixed: the record button read TAP TO RESUME whenever the transcript had
+text, which in silent mode meant offering to resume a recording that never
+started. It now keys off whether audio actually exists.
+
 ## v0.3
 
 ### The repo now builds the site

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Mic, Square, ChevronLeft, Copy, Check, Trash2, History, AlertTriangle,
   Loader2, ClipboardList, ListChecks, StickyNote, Plus, Radio, Download,
-  WifiOff, RotateCw, Play, Lock
+  WifiOff, RotateCw, Play, Lock, Volume2, VolumeX, Keyboard
 } from 'lucide-react';
 
 // ═════════════════════════════════════════════════════════════
@@ -31,6 +31,22 @@ const STRUCTURE_ENDPOINT =
 // you set (or rotate) it, the next structuring request prompts and retries.
 // Client and server need no agreement about whether the feature is "on".
 const PASSPHRASE_KEY = 'passphrase';
+
+// Silent mode. The app itself plays no sounds — nothing here ever touches an
+// audio output — but on iOS every start and stop of SpeechRecognition triggers
+// the system dictation chime, and Safari ends recognition sessions on its own
+// throughout a long dictation, so each restart chimes again. The only lever a
+// web app has is not to run the recognizer at all: silent mode records audio
+// and lets you type the notes instead.
+const SILENT_KEY = 'silent-mode';
+
+// An edge swipe must start within this many pixels of the left edge, travel at
+// least MIN_DX, and stay under MAX_DY. Requiring an edge start is what keeps it
+// from firing while selecting transcript text or scrubbing the audio player.
+const SWIPE_EDGE_PX = 28;
+const SWIPE_MIN_DX = 64;
+const SWIPE_MAX_DY = 48;
+const SWIPE_MAX_MS = 700;
 
 const MAX_AUDIO_MS = 90 * 60 * 1000;   // hard stop at 90 min to bound memory
 const DRAFT_SAVE_MS = 4000;            // checkpoint interval while recording
@@ -288,6 +304,7 @@ export default function FieldReport() {
   // Never sent anywhere but this app's own proxy, as the x-fr-key header.
   const [passphrase, setPassphrase] = useState('');
   const [needKey, setNeedKey] = useState(false);
+  const [silent, setSilent] = useState(false);
 
   const recRef = useRef(null);
   const shouldRestartRef = useRef(false);
@@ -327,6 +344,7 @@ export default function FieldReport() {
     loadReports().then(pruneAudio).then(setReports);
     kvGet('draft').then((d) => { if (d?.transcript?.trim()) setDraft(d); });
     kvGet(PASSPHRASE_KEY).then((k) => { if (typeof k === 'string' && k) setPassphrase(k); });
+    kvGet(SILENT_KEY).then((v) => { if (v === true) setSilent(true); });
   }, []);
 
   // ─── connectivity ───
@@ -507,6 +525,14 @@ export default function FieldReport() {
     if (!ok) return;
     acquireWake();
 
+    // Silent mode never starts SpeechRecognition, which is the only thing in
+    // this app capable of making a sound on iOS. Audio still records.
+    if (silent) {
+      setRecording(true);
+      draftTimerRef.current = setInterval(saveDraft, DRAFT_SAVE_MS);
+      return;
+    }
+
     const rec = getRecognizer();
     if (!rec) {
       // No STT available — still record audio so the walkdown isn't lost.
@@ -588,7 +614,7 @@ export default function FieldReport() {
       await stopCapture();
       releaseWake();
     }
-  }, [startCapture, stopCapture, acquireWake, releaseWake, saveDraft]);
+  }, [startCapture, stopCapture, acquireWake, releaseWake, saveDraft, silent]);
 
   const stopRecording = useCallback(async () => {
     shouldRestartRef.current = false;
@@ -771,6 +797,44 @@ export default function FieldReport() {
     structure(k);
   }, [structure]);
 
+  const toggleSilent = useCallback(() => {
+    setSilent((v) => { kvSet(SILENT_KEY, !v); return !v; });
+  }, []);
+
+  // ─── edge-swipe back ───
+  //
+  // Mirrors the iOS back gesture, which is what a thumb reaches for on a phone.
+  // Deliberately not a free-form swipe: it must begin at the left edge, so it
+  // cannot be confused with selecting transcript text, scrolling, or dragging
+  // the audio scrubber. It is also inert while recording — losing a dictation
+  // to a stray thumb would be much worse than having no gesture at all.
+  const swipeRef = useRef(null);
+
+  const goBack = useCallback(() => {
+    if (view === 'detail') { setDetailReport(null); setView('history'); return; }
+    if (view === 'review') { setView('record'); return; }
+    if (view === 'history' || view === 'record') leaveTo('home');
+  }, [view, leaveTo]);
+
+  const onTouchStart = useCallback((e) => {
+    const t = e.touches?.[0];
+    swipeRef.current =
+      t && t.clientX <= SWIPE_EDGE_PX ? { x: t.clientX, y: t.clientY, at: Date.now() } : null;
+  }, []);
+
+  const onTouchEnd = useCallback((e) => {
+    const start = swipeRef.current;
+    swipeRef.current = null;
+    if (!start || recording) return;
+    const t = e.changedTouches?.[0];
+    if (!t) return;
+    if (
+      t.clientX - start.x >= SWIPE_MIN_DX &&
+      Math.abs(t.clientY - start.y) <= SWIPE_MAX_DY &&
+      Date.now() - start.at <= SWIPE_MAX_MS
+    ) goBack();
+  }, [recording, goBack]);
+
   // The other half of "SAVE RAW — STRUCTURE LATER": pull a saved report back
   // into the record screen, transcript intact and editable, so GENERATE can
   // run against it once there is signal. Saving then replaces it in place.
@@ -889,6 +953,8 @@ export default function FieldReport() {
   return (
     <div
       className="fr-app-shell w-full text-stone-100"
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
       style={{
         fontFamily: FONT_SANS,
         backgroundColor: '#0a0a0a',
@@ -944,6 +1010,8 @@ export default function FieldReport() {
               needKey={needKey}
               onSubmitKey={submitPassphrase}
               onDismissKey={() => setNeedKey(false)}
+              silent={silent}
+              onToggleSilent={toggleSilent}
               onTranscriptEdit={setTranscript}
               micHeld={micHeld}
               onReleaseMic={releaseMic}
@@ -1146,9 +1214,13 @@ function RecordView({
   onStart, onStop, onClear, onStructure, onSaveRaw, processing,
   apiError, micError, sttDown, online, hasAudio, onTranscriptEdit,
   micHeld, onReleaseMic, restructuring, needKey, onSubmitKey, onDismissKey,
+  silent, onToggleSilent,
 }) {
   const hasContent = transcript.trim().length > 0;
   const [editing, setEditing] = useState(false);
+  // Silent mode has no live transcript to read back, so the field is always a
+  // text area — type, or use the keyboard's own dictation, which is quiet.
+  const typing = silent || editing;
 
   return (
     <div className="pt-6 flex flex-1 flex-col">
@@ -1164,10 +1236,27 @@ function RecordView({
         <span className="text-stone-400" style={{ fontFamily: FONT_MONO, fontWeight: 500, fontSize: '10px', letterSpacing: '0.3em' }}>
           {recording ? 'REC' : 'ARMED'} · {template.name} [{template.code}]
         </span>
+        <button
+          onClick={onToggleSilent}
+          disabled={recording}
+          className={`ml-auto flex items-center gap-1 px-2 py-1.5 border rounded-sm disabled:opacity-40 ${
+            silent ? 'border-amber-400/50 text-amber-300' : 'border-stone-700 text-stone-500'
+          }`}
+          style={{ fontFamily: FONT_MONO, fontSize: '9px', letterSpacing: '0.15em' }}
+          title={
+            silent
+              ? 'Silent: no speech recognition, so no iOS dictation chime. Audio still records; type your notes.'
+              : 'Live transcription. On iOS this chimes each time Safari restarts the recognizer.'
+          }
+        >
+          {silent ? <VolumeX size={11} /> : <Volume2 size={11} />}
+          {silent ? 'SILENT' : 'LIVE'}
+        </button>
+
         {micHeld && !recording && (
           <button
             onClick={onReleaseMic}
-            className="ml-auto px-2 py-1.5 border border-stone-700 text-stone-500 hover:text-amber-300 rounded-sm"
+            className="px-2 py-1.5 border border-stone-700 text-stone-500 hover:text-amber-300 rounded-sm"
             style={{ fontFamily: FONT_MONO, fontSize: '9px', letterSpacing: '0.15em' }}
             title="The mic stays open between takes so iOS does not re-prompt. Tap to hand it back."
           >
@@ -1175,6 +1264,17 @@ function RecordView({
           </button>
         )}
       </div>
+
+      {silent && (
+        <div className="mb-4 p-3 border border-stone-700 bg-stone-950 rounded-sm flex gap-2">
+          <Keyboard size={14} className="text-stone-400 mt-0.5 flex-shrink-0" />
+          <div className="text-xs text-stone-400 leading-relaxed" style={{ fontFamily: FONT_MONO }}>
+            <strong className="text-stone-300">SILENT — NO LIVE TRANSCRIPTION.</strong> Nothing
+            starts the recognizer, so iOS plays no dictation chime. Audio still records; type the
+            notes above, or use the keyboard's own microphone, then structure as usual.
+          </div>
+        </div>
+      )}
 
       {restructuring && (
         <div className="mb-4 p-3 border border-amber-400/40 bg-amber-400/5 rounded-sm flex gap-2">
@@ -1207,23 +1307,29 @@ function RecordView({
           <div className="absolute top-2 right-3 tracking-widest text-stone-700" style={{ fontSize: '9px' }}>
             TRANSCRIPT
           </div>
-          {!hasContent && !interim && (
+          {!typing && !hasContent && !interim && (
             <div className="text-stone-600 text-sm pt-4">
               {recording
                 ? 'Listening… speak naturally. Say tag numbers, locations, actions.'
                 : 'Press record and describe what you see. Tap stop when done.'}
             </div>
           )}
-          {hasContent && !editing && (
+          {!typing && hasContent && (
             <div className="text-sm text-stone-200 leading-relaxed whitespace-pre-wrap">
               {transcript}
             </div>
           )}
-          {hasContent && editing && (
+          {typing && (
             <textarea
               value={transcript}
               onChange={(e) => onTranscriptEdit(e.target.value)}
-              className="w-full bg-transparent text-sm text-stone-200 leading-relaxed outline-none resize-y"
+              placeholder={
+                silent
+                  ? 'Silent mode — type the walkdown, or use the keyboard microphone. Audio is still recording.'
+                  : ''
+              }
+              aria-label="Transcript"
+              className="w-full bg-transparent text-sm text-stone-200 leading-relaxed outline-none resize-y placeholder:text-stone-600"
               style={{ fontFamily: FONT_MONO, minHeight: '200px' }}
             />
           )}
@@ -1235,13 +1341,15 @@ function RecordView({
         </div>
         {hasContent && !recording && (
           <div className="flex gap-4 mt-2">
-            <button
-              onClick={() => setEditing((v) => !v)}
-              className="text-stone-500 hover:text-amber-300 transition-colors py-2"
-              style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.2em' }}
-            >
-              {editing ? '✓ DONE EDITING' : '✎ FIX MISHEARD WORDS'}
-            </button>
+            {!silent && (
+              <button
+                onClick={() => setEditing((v) => !v)}
+                className="text-stone-500 hover:text-amber-300 transition-colors py-2"
+                style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.2em' }}
+              >
+                {editing ? '✓ DONE EDITING' : '✎ FIX MISHEARD WORDS'}
+              </button>
+            )}
             <button
               onClick={onClear}
               className="text-stone-600 hover:text-red-400 transition-colors py-2"
@@ -1302,7 +1410,11 @@ function RecordView({
         </button>
 
         <div className="text-stone-500" style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.3em' }}>
-          {recording ? 'TAP TO STOP' : hasContent ? 'TAP TO RESUME' : 'TAP TO RECORD'}
+          {recording
+            ? 'TAP TO STOP'
+            : hasAudio || (hasContent && !silent)
+              ? 'TAP TO RESUME'
+              : 'TAP TO RECORD'}
         </div>
 
         {hasContent && !recording && (
