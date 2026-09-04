@@ -184,7 +184,33 @@ maintain alone.
 4. Tap **SAVE RAW**. It should land in the log with `RAW` and `AUDIO` chips.
 5. Back online, open that report — the audio player should be there.
 6. Structure a new dictation end to end and confirm a report saves.
+7. Dictate, stop, tap **✎ FIX MISHEARD WORDS**, change a word, then record
+   again and keep talking. The edit box should close and the new phrase should
+   join the repaired text.
 
 Step 6 is the one that matters most. Saving was completely broken in v0.1, and
 it failed silently, so a passing save is the signal that the worst defect is
 actually gone.
+
+Step 7 is on the list for the same reason. Until 2026-09-03 everything spoken
+after a hand-edit was dropped from the transcript, the draft and the report,
+with the header still showing `REC` — the only visible symptom was interim text
+that appeared and vanished, which reads as "the microphone isn't picking me
+up". `tests/resume-after-edit.spec.js` pins it, but this is the one to walk
+through on a real phone, because the symptom was one of appearances.
+
+### When someone says transcription stopped working
+
+The failure modes look alike on a phone and have different fixes. In order of
+how often they are the answer:
+
+| What is on screen | Cause |
+|---|---|
+| Interim text flashes grey and vanishes; nothing accumulates | Was the transcript hand-edited first? That was the resume defect above. |
+| A text box with a "type the walkdown" placeholder | Silent mode is on — the recognizer is deliberately never started. |
+| Amber **SPEECH SERVICE UNAVAILABLE** | No network. STT runs on Apple/Google servers, not on the phone. |
+| Nothing at all, no banner, `REC` pulsing | A restart that would not start. Now budgeted and surfaced, so this should raise the amber banner instead. |
+
+`public/diag.html` is the phone-side check: it drives `SpeechRecognition`
+directly, outside the app, and shows the raw results with their confidence
+scores. If diag hears you and the app does not, the fault is in the app.

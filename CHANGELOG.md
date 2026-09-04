@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+### Dictating again after fixing a misheard word no longer goes nowhere
+
+Reported as "I was talking and nothing was showing up." It was not the
+microphone: a hand-edit sets `chunksStale`, which detaches the transcript from
+the recognised chunks on purpose — the edited text no longer corresponds to
+what the engine returned. What was not on purpose is that pressing record again
+left it detached. Every phrase after the edit landed in `chunks` and stopped
+there, missing from the transcript, from the draft, and from the saved report.
+Only the interim text flashed on screen and vanished, while the header went on
+showing `REC`. The audio was the sole surviving record.
+
+Resuming now folds the edited text back in as one fixed chunk and makes it the
+base again — the same move the code already made for a restored draft or a
+report being re-structured. The case list was just missing the one that
+mattered. What is said next appends to the repair instead of disappearing
+behind it.
+
+The edit box also now closes when recording restarts. Left up, it showed a
+transcript rewriting itself inside something that still looked like a text
+field you were typing into.
+
+Repairing a tag and carrying on down the line is the ordinary shape of a
+walkdown, so a test drives it end to end: dictate, edit, record again, speak,
+and assert both halves reach the screen and the model.
+
+### A recognizer restart that will not start is no longer silent
+
+The restart chain runs on `onend`, so a `start()` that threw ended it — no
+further `onend`, no banner, and `REC` still pulsing over a recognizer that had
+stopped listening. The throw was swallowed as "already running", which is true
+only of `InvalidStateError`. Anything else is now retried with the same backoff
+and counted against the existing failure budget, so a recognizer that genuinely
+will not restart raises the SPEECH SERVICE UNAVAILABLE banner instead of
+looking healthy. No new retry loop — it reuses the budget already there.
+
 ## v0.4
 
 ### The endpoint is no longer open to anyone with the link

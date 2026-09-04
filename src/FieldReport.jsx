@@ -58,6 +58,11 @@ const SWIPE_MAX_MS = 700;
 const MAX_FAILED_RESTARTS = 8;    // consecutive genuine errors before giving up
 const MAX_QUIET_RESTARTS = 300;   // ~40 min of unbroken silence; a backstop only
 
+// Said when the failure budget runs out, from either place that can exhaust it:
+// a session that ended badly, or a restart that would not start.
+const STT_DROPPED_MSG =
+  'Speech service kept dropping. Audio is still recording — stop when done and transcribe later.';
+
 // iOS reports a confidence score per recognised phrase, and this is calibrated
 // against a real walkdown dictation on iOS 18.7: the one unusable phrase scored
 // 0.38, a wrong unit tag ("855" for A55) scored 0.90, and every correct phrase
@@ -586,11 +591,18 @@ export default function FieldReport() {
     quietEndsRef.current = 0;
     endReasonRef.current = null;
 
-    // Resuming onto text that has no chunks behind it (a restored draft, or a
-    // saved report being re-structured): fold it in as one fixed chunk so the
-    // derivation below cannot drop it on the first new phrase.
-    if (transcriptRef.current.trim() && !chunks.length && !chunksStale) {
-      setChunks([{ id: uid('c'), text: transcriptRef.current.trim(), conf: null, alts: [] }]);
+    // Resuming onto text the chunks do not describe: a restored draft, a saved
+    // report being re-structured, or — the case that silently lost words — a
+    // hand-edit, which sets chunksStale for good and switches the derivation
+    // off. Left that way, everything said from here on would land in chunks and
+    // never reach the transcript, the draft, or the saved report, while the UI
+    // went on showing REC. Fold the text in as one fixed chunk and make it the
+    // base again, so the next phrase appends to it.
+    if (chunksStale || !chunks.length) {
+      const base = transcriptRef.current.trim();
+      if (base) setChunks([{ id: uid('c'), text: base, conf: null, alts: [] }]);
+      else if (chunksStale) setChunks([]);
+      setChunksStale(false);
     }
 
     const ok = await startCapture();
@@ -615,6 +627,31 @@ export default function FieldReport() {
       return;
     }
     recRef.current = rec;
+
+    // Stop trying to transcribe, and say so. Audio capture is untouched — the
+    // banner's whole point is that the walkdown is still being recorded.
+    const retireStt = (msg) => {
+      shouldRestartRef.current = false;
+      setSttDown(true);
+      setMicError(msg);
+    };
+
+    // The restart chain runs on onend, so a start() that throws ends it: no
+    // further onend fires, and the UI keeps pulsing REC over a recognizer that
+    // is no longer listening. InvalidStateError is the benign case — it means
+    // the session is already running, so the restart effectively happened.
+    // Anything else has to be retried, and counted, or it fails silently.
+    const restart = (delay) => {
+      setTimeout(() => {
+        if (!shouldRestartRef.current) return;
+        try { rec.start(); } catch (err) {
+          if (err?.name === 'InvalidStateError') return;
+          failEndsRef.current += 1;
+          if (failEndsRef.current > MAX_FAILED_RESTARTS) return retireStt(STT_DROPPED_MSG);
+          restart(Math.min(2000, 250 * failEndsRef.current));
+        }
+      }, delay);
+    };
 
     rec.onresult = (e) => {
       const finals = [];
@@ -669,23 +706,14 @@ export default function FieldReport() {
       if (quiet) { quietEndsRef.current += 1; failEndsRef.current = 0; }
       else failEndsRef.current += 1;
 
-      if (failEndsRef.current > MAX_FAILED_RESTARTS) {
-        shouldRestartRef.current = false;
-        setSttDown(true);
-        setMicError('Speech service kept dropping. Audio is still recording — stop when done and transcribe later.');
-        return;
-      }
+      if (failEndsRef.current > MAX_FAILED_RESTARTS) return retireStt(STT_DROPPED_MSG);
       if (quietEndsRef.current > MAX_QUIET_RESTARTS) {
-        shouldRestartRef.current = false;
-        setSttDown(true);
-        setMicError('No speech heard for a long while, so transcription stopped to save battery. Audio is still recording.');
-        return;
+        return retireStt('No speech heard for a long while, so transcription stopped to save battery. Audio is still recording.');
       }
 
       // Back off on real failures; a silence restart should be immediate so a
       // resumed sentence loses as little as possible.
-      const delay = quiet ? 250 : Math.min(2000, 250 * failEndsRef.current);
-      setTimeout(() => { try { rec.start(); } catch { /* already running */ } }, delay);
+      restart(quiet ? 250 : Math.min(2000, 250 * failEndsRef.current));
     };
 
     rec.onerror = (e) => {
@@ -1337,6 +1365,10 @@ function RecordView({
 }) {
   const hasContent = transcript.trim().length > 0;
   const [editing, setEditing] = useState(false);
+  // Recording again means the chunks are the source of truth once more. Left
+  // up, the edit box would show a transcript that rewrites itself while looking
+  // like something you are still typing into.
+  useEffect(() => { if (recording) setEditing(false); }, [recording]);
   // Silent mode has no live transcript to read back, so the field is always a
   // text area — type, or use the keyboard's own dictation, which is quiet.
   const typing = silent || editing;
